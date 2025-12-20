@@ -1,10 +1,16 @@
 # Dice52
 
+![Logo](./logo/dice52-logo.png)
+
 Dice52 is a quantum-safe ratchet protocol. It is a key agreement protocol that uses the Dilithium signature scheme to secure the key exchange.
 
 Goal: A post-quantum, authenticated, forward-secret, per-message-key encryption protocol that preserves Dice52's Ko ordering concept.
 
+--------------------------------
+
 **Available in both Go and Rust!**
+
+--------------------------------
 
 ## Design Principles:
 
