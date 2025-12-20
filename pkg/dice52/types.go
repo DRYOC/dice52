@@ -1,0 +1,112 @@
+package dice52
+
+import (
+	"sync"
+
+	"github.com/cloudflare/circl/kem/kyber/kyber768"
+	"github.com/cloudflare/circl/sign/dilithium/mode3"
+)
+
+const (
+	Version = 1
+
+	// Protocol-specified info strings (Section 8, 9, 10)
+	RKInfo  = "Dice52-RK"
+	KoInfo  = "Dice52-Ko"
+	CKsInfo = "Dice52-CKs"
+	CKrInfo = "Dice52-CKr"
+	MKInfo  = "Dice52-MK"
+
+	// Ratchet info (Section 13)
+	RKRatchetInfo = "Dice52-RK-Ratchet"
+
+	// Ko enhancement info strings (Section 7.1)
+	KoCommitPrefix  = "Dice52-Ko-Commit"
+	KoCommitKeyInfo = "Dice52-Ko-CommitKey"
+	KoEnhancedInfo  = "Dice52-Ko-Enhanced"
+
+	// Signature context (Section 4)
+	SigContext = "Dice52-PQ-Signature"
+
+	KeyLen = 32
+
+	// Section 14: Maximum messages per epoch
+	MaxMessagesPerEpoch = 33
+)
+
+// Session holds the state for a Dice52 PQ ratchet session
+type Session struct {
+	mu sync.Mutex
+
+	// Root & chains
+	RK  []byte
+	CKs []byte
+	CKr []byte
+	Ko  []byte
+
+	Ns    uint64
+	Nr    uint64
+	Epoch uint64 // Section 5: Rekey epoch counter
+
+	// PQ ratchet keys
+	KEMPriv *kyber768.PrivateKey
+	KEMPub  *kyber768.PublicKey
+
+	// 🔐 Identity keys (Dilithium)
+	IDPriv *mode3.PrivateKey
+	IDPub  *mode3.PublicKey
+	PeerID *mode3.PublicKey
+
+	SessionID uint32
+
+	// Ko enhancement state (Section 7.1)
+	koEnhancement *KoEnhancementState
+	koEnhanced    bool
+	isInitiator   bool
+}
+
+// KoEnhancementState holds state during Ko enhancement protocol
+type KoEnhancementState struct {
+	TK           []byte // Temporary key for commit/reveal encryption
+	LocalEntropy []byte // Our local entropy
+	LocalCommit  []byte // Our commitment
+	PeerCommit   []byte // Peer's commitment (set after receiving)
+	PeerEntropy  []byte // Peer's entropy (set after reveal)
+}
+
+// KoCommitMessage is used for Ko enhancement commit phase (Section 7.1.2)
+type KoCommitMessage struct {
+	CommitCT []byte // Encrypted SHA-256 commitment
+}
+
+// KoRevealMessage is used for Ko enhancement reveal phase (Section 7.1.3)
+type KoRevealMessage struct {
+	RevealCT []byte // Encrypted local entropy
+}
+
+// HandshakeMessage is used to send and receive the handshake messages
+type HandshakeMessage struct {
+	KyberCT []byte
+	Sig     []byte
+}
+
+// Message represents an encrypted message with header and body
+type Message struct {
+	Header string
+	Body   string
+}
+
+// RatchetMessage is used for PQ ratchet key exchange
+type RatchetMessage struct {
+	PubKey []byte
+	Sig    []byte
+	CT     []byte
+}
+
+// Header includes all AD fields required by Section 11.1
+type Header struct {
+	Version   uint8  `json:"v"`
+	Epoch     uint64 `json:"e"`
+	MsgNum    uint64 `json:"n"`
+	Direction string `json:"d"` // "send" or "receive"
+}

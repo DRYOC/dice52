@@ -1,0 +1,43 @@
+[package]
+name = "dice52"
+version = "0.1.0"
+edition = "2021"
+description = "Quantum-safe ratchet protocol using ML-KEM (Kyber) and ML-DSA (Dilithium)"
+license = "MIT"
+repository = "https://github.com/dryoc/dice52"
+keywords = ["cryptography", "post-quantum", "ratchet", "kyber", "dilithium"]
+categories = ["cryptography"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dice52-demo"
+path = "src/bin/dice52.rs"
+
+[dependencies]
+# Post-quantum cryptography
+pqcrypto-kyber = "0.8"
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
+
+# Symmetric cryptography
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+
+# Utilities
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+rand = "0.8"
+parking_lot = "0.12"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
