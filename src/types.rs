@@ -1,6 +1,7 @@
 //! Constants and types for the Dice52 protocol.
 
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Protocol version
 pub const VERSION: u8 = 1;
@@ -137,7 +138,8 @@ pub struct KoRevealMessage {
 }
 
 /// State for Ko enhancement protocol
-#[derive(Clone)]
+/// Implements Zeroize to securely clear sensitive data when dropped
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct KoEnhancementState {
     /// Temporary key for commit/reveal encryption
     pub tk: [u8; 32],
@@ -146,7 +148,26 @@ pub struct KoEnhancementState {
     /// Our commitment
     pub local_commit: [u8; 32],
     /// Peer's commitment (set after receiving)
+    #[zeroize(skip)]
     pub peer_commit: Option<[u8; 32]>,
     /// Peer's entropy (set after reveal)
+    #[zeroize(skip)]
     pub peer_entropy: Option<[u8; 32]>,
+}
+
+impl KoEnhancementState {
+    /// Manually zeroize all fields including Options
+    pub fn zeroize_all(&mut self) {
+        self.tk.zeroize();
+        self.local_entropy.zeroize();
+        self.local_commit.zeroize();
+        if let Some(ref mut c) = self.peer_commit {
+            c.zeroize();
+        }
+        if let Some(ref mut e) = self.peer_entropy {
+            e.zeroize();
+        }
+        self.peer_commit = None;
+        self.peer_entropy = None;
+    }
 }

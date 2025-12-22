@@ -5,8 +5,14 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
 };
 use rand::RngCore;
+use zeroize::Zeroize;
 
 use crate::error::{Dice52Error, Result};
+
+/// Securely zero a byte slice
+pub fn zero_bytes(bytes: &mut [u8]) {
+    bytes.zeroize();
+}
 
 /// Generates n random bytes
 pub fn rand_bytes(n: usize) -> Vec<u8> {
@@ -16,12 +22,13 @@ pub fn rand_bytes(n: usize) -> Vec<u8> {
 }
 
 /// Creates a nonce including session ID, epoch and message number
-fn make_nonce(sid: u32, epoch: u64, ctr: u64) -> Nonce {
+fn make_nonce(sid: u32, epoch: u64, ctr: u64) -> ([u8; 12], Nonce) {
     let mut n = [0u8; 12];
     n[0..4].copy_from_slice(&sid.to_be_bytes());
     n[4..8].copy_from_slice(&(epoch as u32).to_be_bytes());
     n[8..12].copy_from_slice(&(ctr as u32).to_be_bytes());
-    Nonce::from(n)
+    let nonce = Nonce::from(n);
+    (n, nonce)
 }
 
 /// Encrypts plaintext using ChaCha20-Poly1305 (Section 11.2)
@@ -36,13 +43,18 @@ fn make_nonce(sid: u32, epoch: u64, ctr: u64) -> Nonce {
 ///
 /// # Returns
 /// Ciphertext with authentication tag
+///
+/// Note: The caller is responsible for zeroing the message key after use.
 pub fn encrypt(mk: &[u8], sid: u32, epoch: u64, ctr: u64, ad: &[u8], pt: &[u8]) -> Vec<u8> {
     let cipher = ChaCha20Poly1305::new_from_slice(mk).expect("Invalid key length");
-    let nonce = make_nonce(sid, epoch, ctr);
+    let (mut n, nonce) = make_nonce(sid, epoch, ctr);
 
-    cipher
+    let ct = cipher
         .encrypt(&nonce, chacha20poly1305::aead::Payload { msg: pt, aad: ad })
-        .expect("Encryption should not fail")
+        .expect("Encryption should not fail");
+
+    n.zeroize(); // Zero nonce after use
+    ct
 }
 
 /// Decrypts ciphertext using ChaCha20-Poly1305 (Section 12)
@@ -57,13 +69,18 @@ pub fn encrypt(mk: &[u8], sid: u32, epoch: u64, ctr: u64, ad: &[u8], pt: &[u8]) 
 ///
 /// # Returns
 /// Decrypted plaintext or error
+///
+/// Note: The caller is responsible for zeroing the message key after use.
 pub fn decrypt(mk: &[u8], sid: u32, epoch: u64, ctr: u64, ad: &[u8], ct: &[u8]) -> Result<Vec<u8>> {
     let cipher = ChaCha20Poly1305::new_from_slice(mk).expect("Invalid key length");
-    let nonce = make_nonce(sid, epoch, ctr);
+    let (mut n, nonce) = make_nonce(sid, epoch, ctr);
 
-    cipher
+    let result = cipher
         .decrypt(&nonce, chacha20poly1305::aead::Payload { msg: ct, aad: ad })
-        .map_err(|e| Dice52Error::DecryptionFailed(e.to_string()))
+        .map_err(|e| Dice52Error::DecryptionFailed(e.to_string()));
+
+    n.zeroize(); // Zero nonce after use
+    result
 }
 
 #[cfg(test)]

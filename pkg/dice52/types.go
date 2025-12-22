@@ -113,6 +113,28 @@ type KoEnhancementState struct {
 	PeerEntropy  []byte // Peer's entropy (set after reveal)
 }
 
+// Zero securely clears all sensitive data in the Ko enhancement state
+func (s *KoEnhancementState) Zero() {
+	if s == nil {
+		return
+	}
+	for i := range s.TK {
+		s.TK[i] = 0
+	}
+	for i := range s.LocalEntropy {
+		s.LocalEntropy[i] = 0
+	}
+	for i := range s.LocalCommit {
+		s.LocalCommit[i] = 0
+	}
+	for i := range s.PeerCommit {
+		s.PeerCommit[i] = 0
+	}
+	for i := range s.PeerEntropy {
+		s.PeerEntropy[i] = 0
+	}
+}
+
 // KoCommitMessage is used for Ko enhancement commit phase (Section 7.1.2)
 type KoCommitMessage struct {
 	CommitCT []byte // Encrypted SHA-256 commitment

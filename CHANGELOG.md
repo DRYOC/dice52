@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2025-12-21
+
+### Security
+
+#### Memory Zeroing
+- **Go**: Added `ZeroBytes()` and `ZeroKey32()` utility functions for secure memory erasure
+- **Go**: Added `KoEnhancementState.Zero()` method to securely clear sensitive enhancement state
+- **Go**: Message keys are now zeroed immediately after encryption/decryption
+- **Go**: Nonces are zeroed after use in encryption/decryption
+- **Go**: Ko enhancement state (TK, entropy, commits) is zeroed when cleared
+- **Go**: `lastSharedSecret` is zeroed when paranoid mode re-enhancement completes
+- **Rust**: Added `zeroize` crate dependency with derive support
+- **Rust**: `KoEnhancementState` now derives `Zeroize` and `ZeroizeOnDrop` for automatic cleanup
+- **Rust**: Added `KoEnhancementState.zeroize_all()` method for explicit zeroing including Option fields
+- **Rust**: Added `zero_bytes()` utility function exported from crypto module
+- **Rust**: Message keys are now zeroed immediately after encryption/decryption
+- **Rust**: Nonces are zeroed after use in encryption/decryption
+- **Rust**: Ko enhancement state is explicitly zeroed in `ko_finalize()` and `ko_finalize_reenhancement()`
+- **Rust**: `last_shared_secret` is zeroed when paranoid mode re-enhancement completes
+
+### Changed
+
+- Sensitive cryptographic material (message keys, nonces, entropy, commits) is now actively zeroed after use to prevent data remanence attacks
+
+---
+
 ## [0.1.5] - 2024-12-21
 
 ### Added

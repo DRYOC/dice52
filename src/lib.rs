@@ -27,7 +27,7 @@ mod kdf;
 mod session;
 mod types;
 
-pub use crypto::{decrypt, encrypt, rand_bytes};
+pub use crypto::{decrypt, encrypt, rand_bytes, zero_bytes};
 pub use error::{Dice52Error, Result};
 pub use handshake::{
     generate_kem_keypair, generate_signing_keypair, initiator_encapsulate, initiator_handshake,

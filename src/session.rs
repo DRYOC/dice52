@@ -7,7 +7,7 @@ use pqcrypto_kyber::kyber768;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey as KemPublicKey, SharedSecret};
 use pqcrypto_traits::sign::DetachedSignature;
 
-use crate::crypto::{decrypt, encrypt, rand_bytes};
+use crate::crypto::{decrypt, encrypt, rand_bytes, zero_bytes};
 use crate::error::{Dice52Error, Result};
 use crate::handshake::generate_kem_keypair;
 use crate::kdf::{
@@ -183,7 +183,7 @@ impl Session {
             return Err(Dice52Error::EpochExhausted);
         }
 
-        let (next_ck, mk) = ck_to_mk(&inner.cks, &inner.ko, inner.ns, 0, &inner.rk);
+        let (next_ck, mut mk) = ck_to_mk(&inner.cks, &inner.ko, inner.ns, 0, &inner.rk);
         inner.cks = next_ck;
 
         // Section 11.1: AD must include version, epoch, message number, direction
@@ -196,6 +196,7 @@ impl Session {
         let ad = serde_json::to_vec(&header).expect("Header serialization should not fail");
 
         let ct = encrypt(&mk, inner.session_id, inner.epoch, inner.ns, &ad, pt);
+        zero_bytes(&mut mk); // Zero message key after use
         inner.ns += 1;
 
         Ok(Message {
@@ -230,7 +231,7 @@ impl Session {
         }
 
         // Derive MK using message number from header (use dir=0 to match sender)
-        let (next_ck, mk) = ck_to_mk(&inner.ckr, &inner.ko, header.msg_num, 0, &inner.rk);
+        let (next_ck, mut mk) = ck_to_mk(&inner.ckr, &inner.ko, header.msg_num, 0, &inner.rk);
         inner.ckr = next_ck;
 
         // Reconstruct AD with send direction for decryption (match sender's AD)
@@ -250,10 +251,11 @@ impl Session {
             header.msg_num,
             &recv_ad,
             &ct,
-        )?;
+        );
+        zero_bytes(&mut mk); // Zero message key after use
 
         inner.nr = header.msg_num + 1;
-        Ok(pt)
+        pt
     }
 
     /// Initiate a PQ ratchet with Dilithium signature
@@ -516,7 +518,7 @@ impl Session {
 
         let mut inner = self.inner.lock();
 
-        let state = inner
+        let mut state = inner
             .ko_enhancement
             .take()
             .ok_or_else(|| Dice52Error::KoEnhancementError("enhancement not started".into()))?;
@@ -560,6 +562,9 @@ impl Session {
 
         // Derive enhanced Ko
         inner.ko = derive_enhanced_ko(&inner.ko, r_initiator, r_responder);
+
+        // Zero all sensitive state data before dropping
+        state.zeroize_all();
 
         // Note: We do NOT reinitialize chain keys here.
         // Ko is used in message key derivation (ck_to_mk), so updating Ko
@@ -700,7 +705,7 @@ impl Session {
 
         let mut inner = self.inner.lock();
 
-        let state = inner
+        let mut state = inner
             .ko_enhancement
             .take()
             .ok_or_else(|| Dice52Error::KoEnhancementError("re-enhancement not started".into()))?;
@@ -744,6 +749,12 @@ impl Session {
 
         // Derive re-enhanced Ko
         inner.ko = derive_enhanced_ko(&inner.ko, r_initiator, r_responder);
+
+        // Zero all sensitive state data
+        state.zeroize_all();
+        if let Some(ref mut ss) = inner.last_shared_secret {
+            zero_bytes(ss);
+        }
 
         // Clear state
         inner.last_ko_enhanced_epoch = inner.epoch;

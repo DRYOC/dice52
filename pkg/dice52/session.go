@@ -76,6 +76,7 @@ func (s *Session) Send(pt []byte) (*Message, error) {
 	}
 	ad, _ := json.Marshal(h)
 	ct := Encrypt(mk, s.SessionID, s.Epoch, s.Ns, ad, pt)
+	ZeroBytes(mk) // Zero message key after use
 	s.Ns++
 
 	return &Message{
@@ -128,6 +129,7 @@ func (s *Session) Receive(m *Message) ([]byte, error) {
 	recvAD, _ := json.Marshal(recvHeader)
 
 	pt, err := Decrypt(mk, s.SessionID, h.Epoch, h.MsgNum, recvAD, ct)
+	ZeroBytes(mk) // Zero message key after use
 	if err != nil {
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
@@ -354,7 +356,8 @@ func (s *Session) KoFinalize(peerRevealMsg *KoRevealMessage) error {
 	// Ko is used in message key derivation (CKtoMK), so updating Ko
 	// is sufficient. Chain keys will continue to evolve naturally.
 
-	// Clear enhancement state
+	// Zero and clear enhancement state
+	s.koEnhancement.Zero()
 	s.koEnhancement = nil
 	s.koEnhanced = true
 
@@ -498,10 +501,12 @@ func (s *Session) KoFinalizeReenhancement(peerRevealMsg *KoRevealMessage) error 
 	// Derive re-enhanced Ko
 	s.Ko = DeriveEnhancedKo(s.Ko, rInitiator, rResponder)
 
-	// Clear state
+	// Zero and clear state
+	s.koEnhancement.Zero()
 	s.koEnhancement = nil
 	s.lastKoEnhancedEpoch = s.Epoch
 	s.pendingKoReenhance = false
+	ZeroBytes(s.lastSharedSecret)
 	s.lastSharedSecret = nil
 
 	return nil
