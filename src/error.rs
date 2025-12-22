@@ -59,4 +59,8 @@ pub enum Dice52Error {
     /// Ko enhancement protocol error
     #[error("Ko enhancement protocol error: {0}")]
     KoEnhancementError(String),
+
+    /// Configuration error
+    #[error("configuration error: {0}")]
+    ConfigError(String),
 }

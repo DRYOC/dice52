@@ -11,13 +11,56 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// SetParanoidMode enables paranoid mode with the given configuration
+func (s *Session) SetParanoidMode(config ParanoidConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("invalid paranoid config: %w", err)
+	}
+
+	s.paranoidConfig = config
+	return nil
+}
+
+// GetParanoidConfig returns the current paranoid mode configuration
+func (s *Session) GetParanoidConfig() ParanoidConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.paranoidConfig
+}
+
+// IsParanoidMode returns whether paranoid mode is enabled
+func (s *Session) IsParanoidMode() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.paranoidConfig.Enabled
+}
+
+// NeedsKoReenhancement returns true if Ko re-enhancement is pending
+func (s *Session) NeedsKoReenhancement() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pendingKoReenhance
+}
+
+// getMaxMessagesPerEpoch returns the configured max messages per epoch
+func (s *Session) getMaxMessagesPerEpoch() uint64 {
+	if s.paranoidConfig.Enabled && s.paranoidConfig.MaxMessagesPerEpoch > 0 {
+		return s.paranoidConfig.MaxMessagesPerEpoch
+	}
+	return DefaultMaxMessagesPerEpoch
+}
+
 // Send encrypts and sends a message (Section 11)
 func (s *Session) Send(pt []byte) (*Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Section 14: Enforce epoch limit
-	if s.Ns >= MaxMessagesPerEpoch {
+	// Section 14: Enforce epoch limit (configurable in paranoid mode)
+	maxMessages := s.getMaxMessagesPerEpoch()
+	if s.Ns >= maxMessages {
 		return nil, errors.New("epoch exhausted: rekey required")
 	}
 
@@ -103,6 +146,17 @@ func (s *Session) applyRatchet(ss []byte) {
 	s.Ns = 0
 	s.Nr = 0
 	s.Epoch++
+
+	// Paranoid mode: Check if Ko re-enhancement is needed (Section 7.2)
+	if s.paranoidConfig.Enabled && s.paranoidConfig.KoReenhanceInterval > 0 {
+		epochsSinceLastEnhance := s.Epoch - s.lastKoEnhancedEpoch
+		if epochsSinceLastEnhance >= s.paranoidConfig.KoReenhanceInterval {
+			s.pendingKoReenhance = true
+			// Store shared secret for re-enhancement
+			s.lastSharedSecret = make([]byte, len(ss))
+			copy(s.lastSharedSecret, ss)
+		}
+	}
 }
 
 // InitiateRatchet starts a PQ ratchet with Dilithium signature
@@ -182,7 +236,7 @@ func (s *Session) KoStartEnhancement(ss []byte) (*KoCommitMessage, error) {
 	defer s.mu.Unlock()
 
 	if s.koEnhanced {
-		return nil, errors.New("Ko already enhanced")
+		return nil, errors.New("ko already enhanced")
 	}
 
 	// Generate local entropy
@@ -280,7 +334,7 @@ func (s *Session) KoFinalize(peerRevealMsg *KoRevealMessage) error {
 
 	// Verify commit
 	if !VerifyCommit(s.SessionID, peerEntropy, s.koEnhancement.PeerCommit) {
-		return errors.New("Ko commit verification failed: reveal does not match commitment")
+		return errors.New("ko commit verification failed: reveal does not match commitment")
 	}
 
 	// Determine initiator/responder entropy order
@@ -303,6 +357,152 @@ func (s *Session) KoFinalize(peerRevealMsg *KoRevealMessage) error {
 	// Clear enhancement state
 	s.koEnhancement = nil
 	s.koEnhanced = true
+
+	// Track when Ko was last enhanced (for paranoid mode)
+	s.lastKoEnhancedEpoch = s.Epoch
+	s.pendingKoReenhance = false
+
+	return nil
+}
+
+// ============================================================================
+// Paranoid Mode Ko Re-enhancement (Section 7.2)
+// ============================================================================
+
+// KoStartReenhancement starts Ko re-enhancement during paranoid mode
+// This should be called after a ratchet when NeedsKoReenhancement() returns true
+func (s *Session) KoStartReenhancement() (*KoCommitMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.paranoidConfig.Enabled {
+		return nil, errors.New("paranoid mode not enabled")
+	}
+
+	if !s.pendingKoReenhance {
+		return nil, errors.New("ko re-enhancement not needed")
+	}
+
+	if s.lastSharedSecret == nil {
+		return nil, errors.New("no shared secret available for re-enhancement")
+	}
+
+	// Generate local entropy
+	localEntropy := RandBytes(32)
+
+	// Derive temporary key from the ratchet shared secret
+	tk := DeriveKoCommitKey(s.lastSharedSecret)
+
+	// Create commitment
+	localCommit := CommitEntropy(s.SessionID, localEntropy)
+
+	// Encrypt commitment with TK (nonce = 0 for commit)
+	aead, err := chacha20poly1305.New(tk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	nonce := make([]byte, 12) // All zeros for commit
+	commitCT := aead.Seal(nil, nonce, localCommit, []byte("ko-reenhance-commit"))
+
+	// Store state
+	s.koEnhancement = &KoEnhancementState{
+		TK:           tk,
+		LocalEntropy: localEntropy,
+		LocalCommit:  localCommit,
+	}
+
+	return &KoCommitMessage{CommitCT: commitCT}, nil
+}
+
+// KoProcessReenhanceCommit processes received re-enhancement commit
+func (s *Session) KoProcessReenhanceCommit(peerCommitMsg *KoCommitMessage) (*KoRevealMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.koEnhancement == nil {
+		return nil, errors.New("re-enhancement not started")
+	}
+
+	// Decrypt peer's commit
+	aead, err := chacha20poly1305.New(s.koEnhancement.TK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	nonce := make([]byte, 12) // All zeros for commit
+	peerCommit, err := aead.Open(nil, nonce, peerCommitMsg.CommitCT, []byte("ko-reenhance-commit"))
+	if err != nil {
+		return nil, fmt.Errorf("commit decryption failed: %w", err)
+	}
+
+	if len(peerCommit) != 32 {
+		return nil, errors.New("invalid commit length")
+	}
+
+	s.koEnhancement.PeerCommit = peerCommit
+
+	// Create reveal (encrypt our entropy with nonce = 1)
+	revealNonce := make([]byte, 12)
+	revealNonce[11] = 1
+	revealCT := aead.Seal(nil, revealNonce, s.koEnhancement.LocalEntropy, []byte("ko-reenhance-reveal"))
+
+	return &KoRevealMessage{RevealCT: revealCT}, nil
+}
+
+// KoFinalizeReenhancement finalizes Ko re-enhancement
+func (s *Session) KoFinalizeReenhancement(peerRevealMsg *KoRevealMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.koEnhancement == nil {
+		return errors.New("re-enhancement not started")
+	}
+
+	if s.koEnhancement.PeerCommit == nil {
+		return errors.New("peer commit not received")
+	}
+
+	// Decrypt peer's reveal
+	aead, err := chacha20poly1305.New(s.koEnhancement.TK)
+	if err != nil {
+		return fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	revealNonce := make([]byte, 12)
+	revealNonce[11] = 1
+	peerEntropy, err := aead.Open(nil, revealNonce, peerRevealMsg.RevealCT, []byte("ko-reenhance-reveal"))
+	if err != nil {
+		return fmt.Errorf("reveal decryption failed: %w", err)
+	}
+
+	if len(peerEntropy) != 32 {
+		return errors.New("invalid reveal length")
+	}
+
+	// Verify commit
+	if !VerifyCommit(s.SessionID, peerEntropy, s.koEnhancement.PeerCommit) {
+		return errors.New("ko re-enhancement commit verification failed")
+	}
+
+	// Determine initiator/responder entropy order
+	var rInitiator, rResponder []byte
+	if s.isInitiator {
+		rInitiator = s.koEnhancement.LocalEntropy
+		rResponder = peerEntropy
+	} else {
+		rInitiator = peerEntropy
+		rResponder = s.koEnhancement.LocalEntropy
+	}
+
+	// Derive re-enhanced Ko
+	s.Ko = DeriveEnhancedKo(s.Ko, rInitiator, rResponder)
+
+	// Clear state
+	s.koEnhancement = nil
+	s.lastKoEnhancedEpoch = s.Epoch
+	s.pendingKoReenhance = false
+	s.lastSharedSecret = nil
 
 	return nil
 }

@@ -15,8 +15,8 @@ use crate::kdf::{
     verify_commit,
 };
 use crate::types::{
-    Header, KoCommitMessage, KoEnhancementState, KoRevealMessage, Message, RatchetMessage, KO_INFO,
-    MAX_MESSAGES_PER_EPOCH, RK_RATCHET_INFO, SIG_CONTEXT, VERSION,
+    Header, KoCommitMessage, KoEnhancementState, KoRevealMessage, Message, ParanoidConfig,
+    RatchetMessage, DEFAULT_MAX_MESSAGES_PER_EPOCH, KO_INFO, RK_RATCHET_INFO, SIG_CONTEXT, VERSION,
 };
 
 /// Session state for a Dice52 PQ ratchet session
@@ -65,6 +65,18 @@ struct SessionInner {
 
     /// Whether this session is the initiator
     is_initiator: bool,
+
+    /// Paranoid mode configuration (Section 7.2)
+    paranoid_config: ParanoidConfig,
+
+    /// Epoch when Ko was last enhanced
+    last_ko_enhanced_epoch: u64,
+
+    /// Flag indicating Ko re-enhancement is needed
+    pending_ko_reenhance: bool,
+
+    /// Stored shared secret for Ko re-enhancement (only in paranoid mode)
+    last_shared_secret: Option<Vec<u8>>,
 }
 
 impl Session {
@@ -120,7 +132,44 @@ impl Session {
                 ko_enhancement: None,
                 ko_enhanced: false,
                 is_initiator,
+                paranoid_config: ParanoidConfig::default(),
+                last_ko_enhanced_epoch: 0,
+                pending_ko_reenhance: false,
+                last_shared_secret: None,
             }),
+        }
+    }
+
+    /// Enable paranoid mode with the given configuration
+    pub fn set_paranoid_mode(&self, config: ParanoidConfig) -> Result<()> {
+        config
+            .validate()
+            .map_err(|e| Dice52Error::ConfigError(e.to_string()))?;
+        self.inner.lock().paranoid_config = config;
+        Ok(())
+    }
+
+    /// Get the current paranoid mode configuration
+    pub fn get_paranoid_config(&self) -> ParanoidConfig {
+        self.inner.lock().paranoid_config.clone()
+    }
+
+    /// Check if paranoid mode is enabled
+    pub fn is_paranoid_mode(&self) -> bool {
+        self.inner.lock().paranoid_config.enabled
+    }
+
+    /// Check if Ko re-enhancement is pending
+    pub fn needs_ko_reenhancement(&self) -> bool {
+        self.inner.lock().pending_ko_reenhance
+    }
+
+    /// Get the effective max messages per epoch
+    fn get_max_messages_per_epoch(inner: &SessionInner) -> u64 {
+        if inner.paranoid_config.enabled && inner.paranoid_config.max_messages_per_epoch > 0 {
+            inner.paranoid_config.max_messages_per_epoch
+        } else {
+            DEFAULT_MAX_MESSAGES_PER_EPOCH
         }
     }
 
@@ -128,8 +177,9 @@ impl Session {
     pub fn send(&self, pt: &[u8]) -> Result<Message> {
         let mut inner = self.inner.lock();
 
-        // Section 14: Enforce epoch limit
-        if inner.ns >= MAX_MESSAGES_PER_EPOCH {
+        // Section 14: Enforce epoch limit (configurable in paranoid mode)
+        let max_messages = Self::get_max_messages_per_epoch(&inner);
+        if inner.ns >= max_messages {
             return Err(Dice52Error::EpochExhausted);
         }
 
@@ -314,6 +364,16 @@ impl Session {
         inner.ns = 0;
         inner.nr = 0;
         inner.epoch += 1;
+
+        // Paranoid mode: Check if Ko re-enhancement is needed (Section 7.2)
+        if inner.paranoid_config.enabled && inner.paranoid_config.ko_reenhance_interval > 0 {
+            let epochs_since_last_enhance = inner.epoch - inner.last_ko_enhanced_epoch;
+            if epochs_since_last_enhance >= inner.paranoid_config.ko_reenhance_interval {
+                inner.pending_ko_reenhance = true;
+                // Store shared secret for re-enhancement
+                inner.last_shared_secret = Some(ss.to_vec());
+            }
+        }
     }
 
     /// Get current epoch
@@ -508,6 +568,187 @@ impl Session {
         // between initiator and responder.
 
         inner.ko_enhanced = true;
+
+        // Track when Ko was last enhanced (for paranoid mode)
+        inner.last_ko_enhanced_epoch = inner.epoch;
+        inner.pending_ko_reenhance = false;
+
+        Ok(())
+    }
+
+    // =========================================================================
+    // Paranoid Mode Ko Re-enhancement (Section 7.2)
+    // =========================================================================
+
+    /// Start Ko re-enhancement during paranoid mode
+    /// This should be called after a ratchet when needs_ko_reenhancement() returns true
+    pub fn ko_start_reenhancement(&self) -> Result<KoCommitMessage> {
+        use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+        let mut inner = self.inner.lock();
+
+        if !inner.paranoid_config.enabled {
+            return Err(Dice52Error::KoEnhancementError(
+                "paranoid mode not enabled".into(),
+            ));
+        }
+
+        if !inner.pending_ko_reenhance {
+            return Err(Dice52Error::KoEnhancementError(
+                "Ko re-enhancement not needed".into(),
+            ));
+        }
+
+        let ss = inner.last_shared_secret.as_ref().ok_or_else(|| {
+            Dice52Error::KoEnhancementError("no shared secret available for re-enhancement".into())
+        })?;
+
+        // Generate local entropy
+        let entropy_vec = rand_bytes(32);
+        let mut local_entropy = [0u8; 32];
+        local_entropy.copy_from_slice(&entropy_vec);
+
+        // Derive temporary key from the ratchet shared secret
+        let tk = derive_ko_commit_key(ss);
+
+        // Create commitment
+        let local_commit = commit_entropy(inner.session_id, &local_entropy);
+
+        // Encrypt commitment with TK (nonce = 0 for commit)
+        let cipher = ChaCha20Poly1305::new_from_slice(&tk).expect("Invalid key length");
+        let nonce = Nonce::from([0u8; 12]);
+        let commit_ct = cipher
+            .encrypt(
+                &nonce,
+                chacha20poly1305::aead::Payload {
+                    msg: &local_commit,
+                    aad: b"ko-reenhance-commit",
+                },
+            )
+            .map_err(|e| Dice52Error::KoEnhancementError(format!("encryption failed: {}", e)))?;
+
+        // Store state
+        inner.ko_enhancement = Some(KoEnhancementState {
+            tk,
+            local_entropy,
+            local_commit,
+            peer_commit: None,
+            peer_entropy: None,
+        });
+
+        Ok(KoCommitMessage { commit_ct })
+    }
+
+    /// Process received re-enhancement commit
+    pub fn ko_process_reenhance_commit(
+        &self,
+        peer_commit_msg: &KoCommitMessage,
+    ) -> Result<KoRevealMessage> {
+        use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+        let mut inner = self.inner.lock();
+
+        let state = inner
+            .ko_enhancement
+            .as_mut()
+            .ok_or_else(|| Dice52Error::KoEnhancementError("re-enhancement not started".into()))?;
+
+        // Decrypt peer's commit
+        let cipher = ChaCha20Poly1305::new_from_slice(&state.tk).expect("Invalid key length");
+        let nonce = Nonce::from([0u8; 12]);
+        let peer_commit_bytes = cipher
+            .decrypt(
+                &nonce,
+                chacha20poly1305::aead::Payload {
+                    msg: &peer_commit_msg.commit_ct,
+                    aad: b"ko-reenhance-commit",
+                },
+            )
+            .map_err(|e| {
+                Dice52Error::KoEnhancementError(format!("commit decryption failed: {}", e))
+            })?;
+
+        let mut peer_commit = [0u8; 32];
+        if peer_commit_bytes.len() != 32 {
+            return Err(Dice52Error::KoEnhancementError(
+                "invalid commit length".into(),
+            ));
+        }
+        peer_commit.copy_from_slice(&peer_commit_bytes);
+        state.peer_commit = Some(peer_commit);
+
+        // Create reveal (encrypt our entropy with nonce = 1)
+        let reveal_nonce = Nonce::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        let reveal_ct = cipher
+            .encrypt(
+                &reveal_nonce,
+                chacha20poly1305::aead::Payload {
+                    msg: &state.local_entropy,
+                    aad: b"ko-reenhance-reveal",
+                },
+            )
+            .map_err(|e| {
+                Dice52Error::KoEnhancementError(format!("reveal encryption failed: {}", e))
+            })?;
+
+        Ok(KoRevealMessage { reveal_ct })
+    }
+
+    /// Finalize Ko re-enhancement
+    pub fn ko_finalize_reenhancement(&self, peer_reveal_msg: &KoRevealMessage) -> Result<()> {
+        use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+        let mut inner = self.inner.lock();
+
+        let state = inner
+            .ko_enhancement
+            .take()
+            .ok_or_else(|| Dice52Error::KoEnhancementError("re-enhancement not started".into()))?;
+
+        let peer_commit = state
+            .peer_commit
+            .ok_or_else(|| Dice52Error::KoEnhancementError("peer commit not received".into()))?;
+
+        // Decrypt peer's reveal
+        let cipher = ChaCha20Poly1305::new_from_slice(&state.tk).expect("Invalid key length");
+        let reveal_nonce = Nonce::from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        let peer_entropy_bytes = cipher
+            .decrypt(
+                &reveal_nonce,
+                chacha20poly1305::aead::Payload {
+                    msg: &peer_reveal_msg.reveal_ct,
+                    aad: b"ko-reenhance-reveal",
+                },
+            )
+            .map_err(|e| {
+                Dice52Error::KoEnhancementError(format!("reveal decryption failed: {}", e))
+            })?;
+
+        if peer_entropy_bytes.len() != 32 {
+            return Err(Dice52Error::KoEnhancementError(
+                "invalid reveal length".into(),
+            ));
+        }
+
+        // Verify commit
+        if !verify_commit(inner.session_id, &peer_entropy_bytes, &peer_commit) {
+            return Err(Dice52Error::KoCommitMismatch);
+        }
+
+        // Determine initiator/responder entropy order
+        let (r_initiator, r_responder) = if inner.is_initiator {
+            (&state.local_entropy[..], &peer_entropy_bytes[..])
+        } else {
+            (&peer_entropy_bytes[..], &state.local_entropy[..])
+        };
+
+        // Derive re-enhanced Ko
+        inner.ko = derive_enhanced_ko(&inner.ko, r_initiator, r_responder);
+
+        // Clear state
+        inner.last_ko_enhanced_epoch = inner.epoch;
+        inner.pending_ko_reenhance = false;
+        inner.last_shared_secret = None;
 
         Ok(())
     }

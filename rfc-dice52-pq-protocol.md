@@ -204,6 +204,55 @@ Where:
 
 The enhanced `Ko` MUST remain secret and MUST NOT be transmitted.
 
+### 7.2 Paranoid Mode (Optional)
+
+Paranoid mode provides additional security guarantees through:
+* Periodic Ko re-enhancement using commit-reveal
+* Reduced epoch message limits
+
+#### 7.2.1 Configuration
+
+Paranoid mode is configured with the following parameters:
+
+| Parameter | Description | Default |
+| --------- | ----------- | ------- |
+| `enabled` | Whether paranoid mode is active | false |
+| `ko_reenhance_interval` | Epochs between Ko re-enhancement (0 = never) | 10 |
+| `max_messages_per_epoch` | Override for the 33-message limit (1-33) | 16 |
+
+#### 7.2.2 Ko Re-enhancement
+
+When paranoid mode is enabled with `ko_reenhance_interval > 0`:
+
+1. After each ratchet, check if `(current_epoch - last_ko_enhanced_epoch) >= ko_reenhance_interval`
+2. If true, flag the session for Ko re-enhancement
+3. Before sending new messages, both parties MUST complete a new commit-reveal:
+
+```
+TK = HKDF(SS_ratchet, "Dice52-Ko-CommitKey")
+ReenhanceCommit = AEAD_Encrypt(TK, nonce=0, Commit, AD="ko-reenhance-commit")
+ReenhanceReveal = AEAD_Encrypt(TK, nonce=1, R_local, AD="ko-reenhance-reveal")
+Ko = HKDF(Ko || R_initiator || R_responder, "Dice52-Ko-Enhanced")
+```
+
+#### 7.2.3 Reduced Epoch Limits
+
+When `max_messages_per_epoch` is configured:
+* The epoch message limit is reduced from 33 to the configured value
+* This increases ratchet frequency, improving forward secrecy granularity
+* Value MUST be between 1 and 33 inclusive
+
+#### 7.2.4 Security Considerations
+
+Paranoid mode provides:
+* **Weak RNG mitigation**: If one party's RNG is weak during a ratchet, the other party's entropy protects Ko
+* **Faster key rotation**: More frequent ratchets limit exposure from any single key
+* **Defense-in-depth**: Multiple independent entropy sources throughout session lifetime
+
+Trade-offs:
+* **Latency**: 2 additional round-trips per Ko re-enhancement
+* **Complexity**: More protocol state to manage
+
 ---
 
 ## 8. Chain Key Initialization

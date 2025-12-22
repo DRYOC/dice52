@@ -81,6 +81,83 @@ Ko = HKDF(Ko_base || R_alice || R_bob, "Dice52-Ko-Enhanced")
 
 ---
 
+## Paranoid Mode (Section 7.2)
+
+Paranoid mode provides additional security guarantees for high-security applications:
+
+| Feature | Standard Mode | Paranoid Mode |
+|---------|---------------|---------------|
+| Ko Enhancement | Once at session start | Periodic re-enhancement every N epochs |
+| Messages per epoch | 33 | Configurable (1-33, default 16) |
+| Ratchet frequency | Every 33 messages | More frequent |
+| Latency | Lower | Higher (extra round-trips) |
+
+### Configuration
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `Enabled` | Activate paranoid mode | `true` |
+| `KoReenhanceInterval` | Epochs between Ko re-enhancement | `10` |
+| `MaxMessagesPerEpoch` | Messages before mandatory ratchet | `16` |
+
+### Go Example
+
+```go
+// Enable paranoid mode with default settings
+alice.SetParanoidMode(dice52.DefaultParanoidConfig())
+
+// Or customize the configuration
+config := dice52.ParanoidConfig{
+    Enabled:             true,
+    KoReenhanceInterval: 5,   // Re-enhance Ko every 5 epochs
+    MaxMessagesPerEpoch: 10,  // Ratchet every 10 messages
+}
+alice.SetParanoidMode(config)
+
+// After ratchet, check if Ko re-enhancement is needed
+if alice.NeedsKoReenhancement() {
+    aliceCommit, _ := alice.KoStartReenhancement()
+    bobCommit, _ := bob.KoStartReenhancement()
+    
+    aliceReveal, _ := alice.KoProcessReenhanceCommit(bobCommit)
+    bobReveal, _ := bob.KoProcessReenhanceCommit(aliceCommit)
+    
+    alice.KoFinalizeReenhancement(bobReveal)
+    bob.KoFinalizeReenhancement(aliceReveal)
+}
+```
+
+### Rust Example
+
+```rust
+use dice52::ParanoidConfig;
+
+// Enable paranoid mode with default settings
+alice.set_paranoid_mode(ParanoidConfig::new())?;
+
+// Or customize the configuration
+let config = ParanoidConfig {
+    enabled: true,
+    ko_reenhance_interval: 5,   // Re-enhance Ko every 5 epochs
+    max_messages_per_epoch: 10, // Ratchet every 10 messages
+};
+alice.set_paranoid_mode(config)?;
+
+// After ratchet, check if Ko re-enhancement is needed
+if alice.needs_ko_reenhancement() {
+    let alice_commit = alice.ko_start_reenhancement()?;
+    let bob_commit = bob.ko_start_reenhancement()?;
+    
+    let alice_reveal = alice.ko_process_reenhance_commit(&bob_commit)?;
+    let bob_reveal = bob.ko_process_reenhance_commit(&alice_commit)?;
+    
+    alice.ko_finalize_reenhancement(&bob_reveal)?;
+    bob.ko_finalize_reenhancement(&alice_reveal)?;
+}
+```
+
+---
+
 ## Go Library
 
 ### Installation

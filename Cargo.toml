@@ -1,6 +1,6 @@
 [package]
 name = "dice52"
-version = "0.1.0"
+version = "0.1.5"
 edition = "2021"
 description = "Quantum-safe ratchet protocol using ML-KEM (Kyber) and ML-DSA (Dilithium)"
 license = "MIT"

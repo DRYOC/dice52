@@ -40,7 +40,7 @@ pub use kdf::{
 pub use session::Session;
 pub use types::{
     HandshakeMessage, Header, KoCommitMessage, KoEnhancementState, KoRevealMessage, Message,
-    RatchetMessage, CKR_INFO, CKS_INFO, KEY_LEN, KO_COMMIT_KEY_INFO, KO_COMMIT_PREFIX,
-    KO_ENHANCED_INFO, KO_INFO, MAX_MESSAGES_PER_EPOCH, MK_INFO, RK_INFO, RK_RATCHET_INFO,
-    SIG_CONTEXT, VERSION,
+    ParanoidConfig, RatchetMessage, CKR_INFO, CKS_INFO, DEFAULT_MAX_MESSAGES_PER_EPOCH, KEY_LEN,
+    KO_COMMIT_KEY_INFO, KO_COMMIT_PREFIX, KO_ENHANCED_INFO, KO_INFO, MAX_MESSAGES_PER_EPOCH,
+    MK_INFO, RK_INFO, RK_RATCHET_INFO, SIG_CONTEXT, VERSION,
 };

@@ -26,8 +26,55 @@ pub const SIG_CONTEXT: &[u8] = b"Dice52-PQ-Signature";
 /// Key length in bytes
 pub const KEY_LEN: usize = 32;
 
-/// Section 14: Maximum messages per epoch
-pub const MAX_MESSAGES_PER_EPOCH: u64 = 33;
+/// Section 14: Default maximum messages per epoch
+pub const DEFAULT_MAX_MESSAGES_PER_EPOCH: u64 = 33;
+
+/// For backwards compatibility
+pub const MAX_MESSAGES_PER_EPOCH: u64 = DEFAULT_MAX_MESSAGES_PER_EPOCH;
+
+/// Paranoid mode configuration (Section 7.2)
+#[derive(Clone, Debug)]
+pub struct ParanoidConfig {
+    /// Whether paranoid mode is enabled
+    pub enabled: bool,
+    /// How often to re-run Ko commit-reveal (in epochs)
+    /// Value of 0 means never re-enhance after initial enhancement
+    pub ko_reenhance_interval: u64,
+    /// Override for max messages per epoch (must be 1-33)
+    pub max_messages_per_epoch: u64,
+}
+
+impl Default for ParanoidConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ko_reenhance_interval: 0,
+            max_messages_per_epoch: DEFAULT_MAX_MESSAGES_PER_EPOCH,
+        }
+    }
+}
+
+impl ParanoidConfig {
+    /// Create a new paranoid config with sensible defaults
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            ko_reenhance_interval: 10,  // Re-enhance Ko every 10 epochs
+            max_messages_per_epoch: 16, // Reduced from 33 to 16
+        }
+    }
+
+    /// Validate the configuration
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.max_messages_per_epoch < 1 {
+            return Err("max_messages_per_epoch must be >= 1");
+        }
+        if self.max_messages_per_epoch > 33 {
+            return Err("max_messages_per_epoch must be <= 33");
+        }
+        Ok(())
+    }
+}
 
 /// Handshake message for initial key exchange
 #[derive(Clone, Debug)]

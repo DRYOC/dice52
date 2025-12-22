@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2024-12-21
+
+### Added
+
+#### Paranoid Mode (Section 7.2)
+- **Configurable Security Levels**: New `ParanoidConfig` type for fine-tuning security parameters
+- **Periodic Ko Re-enhancement**: Commit-reveal protocol can now run every N epochs for additional entropy injection
+- **Configurable Epoch Limits**: `MaxMessagesPerEpoch` can be reduced from 33 to increase ratchet frequency
+- **Defense Against Weak RNG**: Independent entropy from both parties protects against compromised random number generators
+
+#### New Configuration Options
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `Enabled` | Activate paranoid mode | `true` |
+| `KoReenhanceInterval` | Epochs between Ko re-enhancement (0 = never) | `10` |
+| `MaxMessagesPerEpoch` | Messages before mandatory ratchet (1-33) | `16` |
+
+#### Go API Additions
+- `ParanoidConfig` struct with `Validate()` and `DefaultParanoidConfig()`
+- `Session.SetParanoidMode(config)` - Enable paranoid mode
+- `Session.GetParanoidConfig()` - Get current configuration
+- `Session.IsParanoidMode()` - Check if paranoid mode is active
+- `Session.NeedsKoReenhancement()` - Check if Ko re-enhancement is pending
+- `Session.KoStartReenhancement()` - Start Ko re-enhancement after ratchet
+- `Session.KoProcessReenhanceCommit()` - Process peer's re-enhancement commit
+- `Session.KoFinalizeReenhancement()` - Finalize Ko re-enhancement
+
+#### Rust API Additions
+- `ParanoidConfig` struct with `new()`, `default()`, and `validate()`
+- `Session::set_paranoid_mode(config)` - Enable paranoid mode
+- `Session::get_paranoid_config()` - Get current configuration
+- `Session::is_paranoid_mode()` - Check if paranoid mode is active
+- `Session::needs_ko_reenhancement()` - Check if Ko re-enhancement is pending
+- `Session::ko_start_reenhancement()` - Start Ko re-enhancement
+- `Session::ko_process_reenhance_commit()` - Process peer's commit
+- `Session::ko_finalize_reenhancement()` - Finalize re-enhancement
+- `Dice52Error::ConfigError` - New error variant for configuration errors
+
+### Changed
+
+- `MaxMessagesPerEpoch` constant renamed to `DefaultMaxMessagesPerEpoch` (old name kept for compatibility)
+- Session now tracks `lastKoEnhancedEpoch` for paranoid mode timing
+- Ratchet function now checks for pending Ko re-enhancement
+
+### Documentation
+
+- RFC updated with Section 7.2 covering paranoid mode specification
+- README updated with paranoid mode examples for both Go and Rust
+- New configuration tables in documentation
+
+### Security
+
+- Ko re-enhancement uses separate AAD strings (`ko-reenhance-commit`, `ko-reenhance-reveal`) to distinguish from initial enhancement
+- Shared secret from ratchet is stored only when paranoid mode requires it
+- State is properly cleared after re-enhancement completes
+
+---
+
 ## [0.1.0] - 2024-12-21
 
 ### Added
@@ -83,5 +141,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.1.5]: https://github.com/dryoc/dice52/releases/tag/v0.1.5
 [0.1.0]: https://github.com/dryoc/dice52/releases/tag/v0.1.0
 

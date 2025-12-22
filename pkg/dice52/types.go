@@ -1,6 +1,7 @@
 package dice52
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/cloudflare/circl/kem/kyber/kyber768"
@@ -30,9 +31,41 @@ const (
 
 	KeyLen = 32
 
-	// Section 14: Maximum messages per epoch
-	MaxMessagesPerEpoch = 33
+	// Section 14: Default maximum messages per epoch
+	DefaultMaxMessagesPerEpoch = 33
 )
+
+// ParanoidConfig configures paranoid mode settings (Section 7.2)
+type ParanoidConfig struct {
+	// Enabled activates paranoid mode
+	Enabled bool
+	// KoReenhanceInterval specifies how often to re-run Ko commit-reveal (in epochs)
+	// Value of 0 means never re-enhance after initial enhancement
+	KoReenhanceInterval uint64
+	// MaxMessagesPerEpoch overrides the default 33 messages per epoch
+	// Must be >= 1 and <= 33
+	MaxMessagesPerEpoch uint64
+}
+
+// DefaultParanoidConfig returns a sensible default paranoid configuration
+func DefaultParanoidConfig() ParanoidConfig {
+	return ParanoidConfig{
+		Enabled:             true,
+		KoReenhanceInterval: 10, // Re-enhance Ko every 10 epochs
+		MaxMessagesPerEpoch: 16, // Reduced from 33 to 16
+	}
+}
+
+// Validate checks if the paranoid config is valid
+func (c ParanoidConfig) Validate() error {
+	if c.MaxMessagesPerEpoch < 1 {
+		return errors.New("MaxMessagesPerEpoch must be >= 1")
+	}
+	if c.MaxMessagesPerEpoch > 33 {
+		return errors.New("MaxMessagesPerEpoch must be <= 33")
+	}
+	return nil
+}
 
 // Session holds the state for a Dice52 PQ ratchet session
 type Session struct {
@@ -63,6 +96,12 @@ type Session struct {
 	koEnhancement *KoEnhancementState
 	koEnhanced    bool
 	isInitiator   bool
+
+	// Paranoid mode (Section 7.2)
+	paranoidConfig      ParanoidConfig
+	lastKoEnhancedEpoch uint64 // Epoch when Ko was last enhanced
+	pendingKoReenhance  bool   // Flag indicating Ko re-enhancement is needed
+	lastSharedSecret    []byte // Stored for Ko re-enhancement (only in paranoid mode)
 }
 
 // KoEnhancementState holds state during Ko enhancement protocol
