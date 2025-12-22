@@ -1,11 +1,18 @@
-# Dice52-PQ Protocol Specification
+# Dice52-PQ Ratchet Protocol Specification
 
-### Version 1
+### Version 1 (Draft)
 
 ## Status of This Memo
 
-This document specifies the Dice52-PQ secure messaging protocol.
-It is not an IETF standard, but is written in RFC style for review, analysis, and implementation consistency.
+⚠️ **EXPERIMENTAL** — This document specifies the Dice52-PQ secure messaging protocol as an **experimental research protocol**. It has not been formally analyzed, independently audited, or submitted to any standards body.
+
+This specification is written in RFC style for review, analysis, and implementation consistency. It is **NOT** an IETF standard, Internet-Draft, or recommendation.
+
+**Implementers and researchers are encouraged to:**
+- Provide critical feedback
+- Identify weaknesses in the design
+- Suggest improvements or alternatives
+- NOT deploy this in production systems
 
 ---
 
@@ -30,6 +37,49 @@ Dice52-PQ combines:
 Dice52-PQ is inspired by modern double-ratchet designs but introduces an **Ordering Key (`Ko`)**, which deterministically and secretly influences all key derivations.
 
 Dice52-PQ provides **computational security**, not information-theoretic (one-time-pad) security.
+
+---
+
+## 1.1 Scope and Non-Goals
+
+### 1.1.1 What Dice52-PQ Is
+
+Dice52-PQ is a **focused experiment** exploring:
+
+* Post-quantum authenticated ratcheting using ML-KEM and ML-DSA
+* The Ko (ordering key) concept for deterministic hidden key derivation
+* Entropy-robust key agreement through commit-reveal enhancement
+* Defense-in-depth against single-point cryptographic failures
+
+### 1.1.2 What Dice52-PQ Is NOT
+
+| Non-Goal | Rationale |
+|----------|-----------|
+| VPN or tunnel protocol | Dice52-PQ operates at the session layer; it does not handle IP routing, NAT traversal, or network-layer concerns. Use WireGuard, IPsec, or similar for those needs. |
+| TLS replacement | TLS provides a complete, audited, standardized ecosystem. Dice52-PQ is a single cryptographic building block. |
+| Signal Protocol replacement | Signal has formal proofs, extensive audits, and billions of users. Dice52-PQ is unproven. |
+| Production-ready solution | No independent audit, no formal verification, no deployment experience. |
+| Complete messaging system | Dice52-PQ provides key agreement and ratcheting only—not user identity, group messaging, metadata protection, or transport. |
+
+### 1.1.3 Relationship to Existing Protocols
+
+| Protocol | Relationship |
+|----------|--------------|
+| WireGuard | Dice52-PQ could theoretically operate as an inner ratchet layer within a WireGuard tunnel, but does NOT replace it. |
+| Noise Framework | Dice52-PQ is **not** a Noise pattern. Future work may formalize a mapping to Noise-like semantics. |
+| Signal Protocol | Dice52-PQ borrows conceptually from double-ratchet designs but introduces different primitives and the Ko concept. |
+| MLS | Dice52-PQ is pairwise only; it does not address group key agreement. |
+
+### 1.1.4 Security Caveats
+
+This specification has NOT undergone:
+
+* Formal symbolic analysis (e.g., ProVerif, Tamarin)
+* Computational security proofs
+* Independent cryptographic audit
+* Side-channel analysis
+
+Implementations MUST be considered experimental and SHOULD NOT be used where security failures could cause harm.
 
 ---
 
@@ -453,6 +503,20 @@ Implementations MUST:
 
 ## 18. Conclusion
 
-Dice52-PQ is a fully authenticated, post-quantum ratcheting secure messaging protocol that preserves Dice52's ordering-based key derivation while adhering to modern cryptographic best practices.
+Dice52-PQ is an **experimental** post-quantum ratcheting protocol that explores entropy-robust key derivation through the Ko (ordering key) concept. It combines ML-KEM and ML-DSA with a commit-reveal enhancement phase to provide defense-in-depth against cryptographic failures.
 
 The Ko Enhancement Phase (Section 7.1) provides additional security by introducing independent entropy from both parties into the ordering key derivation, ensuring defense-in-depth against single-point-of-failure compromises.
+
+### 18.1 Future Work
+
+For Dice52-PQ to mature beyond experimental status, the following would be required:
+
+* Formal symbolic analysis (ProVerif, Tamarin) to verify security properties
+* Computational security proofs under standard assumptions
+* Independent cryptographic audit by qualified reviewers
+* Side-channel analysis and implementation hardening
+* Community review and feedback from CFRG or equivalent
+
+### 18.2 Call for Review
+
+The authors invite critical feedback on this specification. Weaknesses, alternative designs, and constructive criticism are welcomed. Please avoid deploying this protocol in production systems until it has undergone rigorous independent review.

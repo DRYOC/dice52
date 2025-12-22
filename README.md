@@ -1,16 +1,43 @@
-# Dice52
+# Dice52-PQ Ratchet Protocol
 
 ![Logo](./logo/dice52-logo.png)
 
-Dice52 is a quantum-safe ratchet protocol. It is a key agreement protocol that uses the Dilithium signature scheme to secure the key exchange.
+> ⚠️ **EXPERIMENTAL PROTOCOL** — Dice52-PQ is an experimental research protocol. It has not been audited, formally verified, or standardized. Do not use in production systems without independent security review.
 
-Goal: A post-quantum, authenticated, forward-secret, per-message-key encryption protocol that preserves Dice52's Ko ordering concept.
+Dice52 explores **entropy-robust post-quantum ratcheting** for secure channels. It is a key agreement protocol that uses ML-DSA (Dilithium) signatures and ML-KEM (Kyber) key encapsulation to achieve quantum-resistant authenticated key exchange.
+
+**Goal:** A post-quantum, authenticated, forward-secret, per-message-key encryption protocol that preserves Dice52's Ko ordering concept.
 
 --------------------------------
 
 **Available in both Go and Rust!**
 
 --------------------------------
+
+## Status
+
+| Aspect | Status |
+|--------|--------|
+| Specification | Draft v1 — subject to breaking changes |
+| Implementation | Reference quality — not production-hardened |
+| Security Audit | **None** — awaiting independent review |
+| Formal Analysis | **None** — symbolic/computational proofs pending |
+| Standardization | Not submitted to any standards body |
+
+---
+
+## Non-Goals
+
+Dice52 is explicitly **NOT**:
+
+| ❌ Non-Goal | Explanation |
+|------------|-------------|
+| A VPN replacement | Dice52 is not WireGuard, OpenVPN, or IPsec. It does not handle routing, tunneling, or network-layer concerns. |
+| A TLS replacement | Dice52 focuses on ratcheted messaging, not the full TLS handshake/record layer ecosystem. |
+| A Signal replacement | While inspired by double-ratchet designs, Dice52 lacks the ecosystem, formal proofs, and battle-testing of Signal. |
+| Production-ready | No security audit, no formal verification, no production deployments. |
+| A complete messaging system | Dice52 is a cryptographic primitive layer, not a full application protocol. |
+
 
 ## Design Principles:
 
