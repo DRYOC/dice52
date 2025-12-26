@@ -8,3 +8,18 @@ dice52_pq_ratchet
 clients/rust/target/
 Cargo.lock
 clients/rust/Cargo.lock
+
+# Python
+clients/python3/.venv/
+clients/python3/__pycache__/
+clients/python3/**/__pycache__/
+clients/python3/*.egg-info/
+clients/python3/dist/
+clients/python3/build/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Java
+clients/java/target/
+*.class

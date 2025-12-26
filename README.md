@@ -10,7 +10,11 @@ Dice52 explores **entropy-robust post-quantum ratcheting** for secure channels. 
 
 --------------------------------
 
-**Available in both Go and Rust!**
+**Available in:**
+- [Go](./clients/golang/) ([example](./clients/golang/cmd/dice52/main.go))
+- [Rust](./clients/rust/) ([example](./clients/rust/src/bin/dice52.rs))
+- [Python 3](./clients/python3/) ([example](./clients/python3/dice52/demo.py))
+- [Java](./clients/java/) ([example](./clients/java/src/main/java/io/dice52/Demo.java))
 
 --------------------------------
 
@@ -456,22 +460,46 @@ dice52/
 │   │   │   └── ko_enhancement_test.go  # Ko enhancement tests
 │   │   ├── go.mod               # Go module
 │   │   └── go.sum
-│   └── rust/                    # Rust implementation
-│       ├── src/                 # Rust library code
-│       │   ├── lib.rs           # Library entry point
-│       │   ├── types.rs         # Constants & types
-│       │   ├── kdf.rs           # Key derivation (HKDF)
-│       │   ├── handshake.rs     # Handshake protocol
-│       │   ├── crypto.rs        # ChaCha20-Poly1305 encryption
-│       │   ├── session.rs       # Session management
-│       │   ├── error.rs         # Error types
-│       │   └── bin/
-│       │       └── dice52.rs    # Rust demo executable
-│       ├── benches/
-│       │   └── benchmarks.rs    # Rust benchmarks
-│       ├── Cargo.toml           # Rust crate manifest
-│       └── Cargo.lock
-├── Makefile                     # Build commands for both
+│   ├── rust/                    # Rust implementation
+│   │   ├── src/                 # Rust library code
+│   │   │   ├── lib.rs           # Library entry point
+│   │   │   ├── types.rs         # Constants & types
+│   │   │   ├── kdf.rs           # Key derivation (HKDF)
+│   │   │   ├── handshake.rs     # Handshake protocol
+│   │   │   ├── crypto.rs        # ChaCha20-Poly1305 encryption
+│   │   │   ├── session.rs       # Session management
+│   │   │   ├── error.rs         # Error types
+│   │   │   └── bin/
+│   │   │       └── dice52.rs    # Rust demo executable
+│   │   ├── benches/
+│   │   │   └── benchmarks.rs    # Rust benchmarks
+│   │   ├── Cargo.toml           # Rust crate manifest
+│   │   └── Cargo.lock
+│   ├── python3/                 # Python 3 implementation
+│   │   ├── dice52/              # Python package
+│   │   │   ├── __init__.py
+│   │   │   ├── types.py         # Constants & types
+│   │   │   ├── kdf.py           # Key derivation (HKDF)
+│   │   │   ├── handshake.py     # Handshake protocol
+│   │   │   ├── crypto.py        # ChaCha20-Poly1305 encryption
+│   │   │   ├── session.py       # Session management
+│   │   │   └── demo.py          # Demo executable
+│   │   ├── tests/               # Unit tests
+│   │   ├── pyproject.toml       # Python package config
+│   │   ├── requirements.txt     # Dependencies
+│   │   └── Makefile
+│   └── java/                    # Java implementation
+│       ├── src/main/java/io/dice52/
+│       │   ├── Types.java       # Constants & types
+│       │   ├── Kdf.java         # Key derivation (HKDF)
+│       │   ├── Handshake.java   # Handshake protocol
+│       │   ├── Crypto.java      # ChaCha20-Poly1305 encryption
+│       │   ├── Session.java     # Session management
+│       │   └── Demo.java        # Demo executable
+│       ├── src/test/java/       # Unit tests
+│       ├── pom.xml              # Maven config
+│       └── Makefile
+├── Makefile                     # Build commands for Go/Rust
 ├── rfc-dice52-pq-protocol.md    # Protocol specification
 └── README.md
 ```

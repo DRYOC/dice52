@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2025-12-26
+
+### Added
+
+#### Python 3 Implementation (`clients/python3/`)
+- **Full protocol implementation**: Complete Dice52-PQ protocol in Python 3
+- **Post-quantum cryptography**: Uses `kyber-py` and `dilithium-py` (pure Python implementations)
+- **Symmetric cryptography**: Uses `pycryptodome` for ChaCha20-Poly1305 and HKDF-SHA-256
+- **Package structure**: Proper Python package with `pyproject.toml` for pip installation
+- **Module files**:
+  - `dice52/__init__.py` - Package exports
+  - `dice52/types.py` - Protocol constants and data types
+  - `dice52/error.py` - Exception classes
+  - `dice52/crypto.py` - ChaCha20-Poly1305 encryption/decryption
+  - `dice52/kdf.py` - HKDF-SHA256 key derivation functions
+  - `dice52/handshake.py` - Kyber768/Dilithium3 handshake
+  - `dice52/session.py` - Session management with ratcheting and Ko enhancement
+  - `dice52/demo.py` - Demo application
+- **Testing**: Unit tests in `tests/test_session.py`
+- **Build targets**: Local Makefile with `install`, `test`, `demo`, `clean` targets
+
+#### Java Implementation (`clients/java/`)
+- **Full protocol implementation**: Complete Dice52-PQ protocol in Java 17
+- **Post-quantum cryptography**: Uses Bouncy Castle 1.78 for ML-KEM-768 (Kyber) and ML-DSA-65 (Dilithium)
+- **Symmetric cryptography**: Bouncy Castle for ChaCha20-Poly1305 and HKDF-SHA-256
+- **Maven project**: Standard Maven structure with `pom.xml`
+- **Source files**:
+  - `io.dice52.Constants` - Protocol constants
+  - `io.dice52.Types` - Data types and message structures
+  - `io.dice52.Dice52Exception` - Exception hierarchy
+  - `io.dice52.Crypto` - ChaCha20-Poly1305 encryption/decryption
+  - `io.dice52.Kdf` - HKDF-SHA256 key derivation functions
+  - `io.dice52.Handshake` - Kyber768/Dilithium3 handshake
+  - `io.dice52.Session` - Session management with ratcheting and Ko enhancement
+  - `io.dice52.Demo` - Demo application
+- **Testing**: JUnit 5 tests in `SessionTest.java`
+- **Build targets**: Local Makefile with `build`, `test`, `demo`, `clean` targets
+
+#### Features (Both Implementations)
+- Authenticated handshake with ML-KEM-768 and ML-DSA-65 signatures
+- Ko enhancement protocol (commit-reveal) for defense-in-depth
+- PQ ratcheting with signature verification
+- Paranoid mode support with configurable parameters
+- Message encryption/decryption with ChaCha20-Poly1305
+- HKDF key derivation per RFC specification
+- Thread-safe session management
+
+---
+
 ## [0.1.7] - 2025-12-26
 
 ### Changed
@@ -186,6 +235,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.1.8]: https://github.com/dryoc/dice52/releases/tag/v0.1.8
 [0.1.7]: https://github.com/dryoc/dice52/releases/tag/v0.1.7
 [0.1.6]: https://github.com/dryoc/dice52/releases/tag/v0.1.6
 [0.1.5]: https://github.com/dryoc/dice52/releases/tag/v0.1.5
