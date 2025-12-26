@@ -498,6 +498,7 @@ Implementations MUST:
 * NIST FIPS 204 — ML-DSA
 * RFC 5869 — HKDF
 * RFC 8439 — ChaCha20-Poly1305
+* Goldwasser, S. and Micali, S. (1982) — "Probabilistic Encryption & How To Play Mental Poker Keeping Secret All Partial Information," Proceedings of the 14th Annual ACM Symposium on Theory of Computing (STOC '82)
 
 ---
 
