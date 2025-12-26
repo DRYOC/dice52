@@ -198,7 +198,7 @@ go get github.com/dryoc/dice52
 Import the package in your Go code:
 
 ```go
-import "github.com/dryoc/dice52/pkg/dice52"
+import "github.com/dryoc/dice52/clients/golang/pkg/dice52"
 ```
 
 #### Example: Establishing a Session
@@ -210,7 +210,7 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/dryoc/dice52/pkg/dice52"
+	"github.com/dryoc/dice52/clients/golang/pkg/dice52"
 
 	"github.com/cloudflare/circl/kem/kyber/kyber768"
 	"github.com/cloudflare/circl/sign/dilithium/mode3"
@@ -298,13 +298,17 @@ func main() {
 ### Running the Go Demo
 
 ```bash
-go run ./cmd/dice52
+make run
+# or directly:
+cd clients/golang && go run ./cmd/dice52
 ```
 
 ### Building Go
 
 ```bash
-go build ./...
+make build
+# or directly:
+cd clients/golang && go build ./...
 ```
 
 ---
@@ -317,7 +321,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dice52 = { git = "https://github.com/dryoc/dice52" }
+dice52 = { git = "https://github.com/dryoc/dice52", subdirectory = "clients/rust" }
 ```
 
 Or if published to crates.io:
@@ -412,19 +416,25 @@ fn main() {
 ### Running the Rust Demo
 
 ```bash
-cargo run --bin dice52-demo
+make rust-run
+# or directly:
+cd clients/rust && cargo run --bin dice52-demo
 ```
 
 ### Building Rust
 
 ```bash
-cargo build --release
+make rust-build
+# or directly:
+cd clients/rust && cargo build --release
 ```
 
 ### Running Tests
 
 ```bash
-cargo test
+make rust-test
+# or directly:
+cd clients/rust && cargo test
 ```
 
 ---
@@ -433,30 +443,36 @@ cargo test
 
 ```
 dice52/
-├── cmd/dice52/              # Go executable demo
-│   └── main.go
-├── pkg/dice52/              # Go library code
-│   ├── types.go             # Constants & types
-│   ├── kdf.go               # Key derivation (HKDF)
-│   ├── handshake.go         # Handshake protocol
-│   ├── crypto.go            # ChaCha20-Poly1305 encryption
-│   ├── session.go           # Session management
-│   └── ko_enhancement_test.go  # Ko enhancement tests
-├── src/                     # Rust library code
-│   ├── lib.rs               # Library entry point
-│   ├── types.rs             # Constants & types
-│   ├── kdf.rs               # Key derivation (HKDF)
-│   ├── handshake.rs         # Handshake protocol
-│   ├── crypto.rs            # ChaCha20-Poly1305 encryption
-│   ├── session.rs           # Session management
-│   ├── error.rs             # Error types
-│   └── bin/
-│       └── dice52.rs        # Rust demo executable
-├── benches/
-│   └── benchmarks.rs        # Rust benchmarks
-├── Cargo.toml               # Rust crate manifest
-├── go.mod                   # Go module
-├── Makefile                 # Build commands for both
+├── clients/
+│   ├── golang/                  # Go implementation
+│   │   ├── cmd/dice52/          # Go executable demo
+│   │   │   └── main.go
+│   │   ├── pkg/dice52/          # Go library code
+│   │   │   ├── types.go         # Constants & types
+│   │   │   ├── kdf.go           # Key derivation (HKDF)
+│   │   │   ├── handshake.go     # Handshake protocol
+│   │   │   ├── crypto.go        # ChaCha20-Poly1305 encryption
+│   │   │   ├── session.go       # Session management
+│   │   │   └── ko_enhancement_test.go  # Ko enhancement tests
+│   │   ├── go.mod               # Go module
+│   │   └── go.sum
+│   └── rust/                    # Rust implementation
+│       ├── src/                 # Rust library code
+│       │   ├── lib.rs           # Library entry point
+│       │   ├── types.rs         # Constants & types
+│       │   ├── kdf.rs           # Key derivation (HKDF)
+│       │   ├── handshake.rs     # Handshake protocol
+│       │   ├── crypto.rs        # ChaCha20-Poly1305 encryption
+│       │   ├── session.rs       # Session management
+│       │   ├── error.rs         # Error types
+│       │   └── bin/
+│       │       └── dice52.rs    # Rust demo executable
+│       ├── benches/
+│       │   └── benchmarks.rs    # Rust benchmarks
+│       ├── Cargo.toml           # Rust crate manifest
+│       └── Cargo.lock
+├── Makefile                     # Build commands for both
+├── rfc-dice52-pq-protocol.md    # Protocol specification
 └── README.md
 ```
 

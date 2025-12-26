@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2025-12-26
+
+### Changed
+
+#### Repository Restructuring
+- **New `clients/` directory**: Moved language implementations into dedicated subfolders
+- **Go implementation**: Now located at `clients/golang/` (includes `cmd/`, `pkg/`, `go.mod`, `go.sum`)
+- **Rust implementation**: Now located at `clients/rust/` (includes `src/`, `benches/`, `Cargo.toml`, `Cargo.lock`)
+- **Updated Makefile**: All build targets now use `cd clients/<lang>` to execute in correct directories
+- **Updated README.md**: Import paths, build commands, and project structure documentation reflect new layout
+
+### Documentation
+
+- Updated Go import path to `github.com/dryoc/dice52/clients/golang/pkg/dice52`
+- Updated Rust git dependency to include `subdirectory = "clients/rust"`
+- Revised project structure section in README to show new folder hierarchy
+
+---
+
 ## [0.1.6] - 2025-12-21
 
 ### Security
@@ -167,6 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.1.7]: https://github.com/dryoc/dice52/releases/tag/v0.1.7
+[0.1.6]: https://github.com/dryoc/dice52/releases/tag/v0.1.6
 [0.1.5]: https://github.com/dryoc/dice52/releases/tag/v0.1.5
 [0.1.0]: https://github.com/dryoc/dice52/releases/tag/v0.1.0
 

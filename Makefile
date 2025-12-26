@@ -7,49 +7,46 @@ all: fmt tidy rust-fmt
 
 # ============== Go Targets ==============
 
-init:
-	go mod init dice52
-
 fmt:
-	go fmt ./...
+	cd clients/golang && go fmt ./...
 
 tidy:
-	go mod tidy
+	cd clients/golang && go mod tidy
 
 build:
-	go build -o bin/dice52 cmd/dice52/main.go
+	cd clients/golang && go build -o bin/dice52 cmd/dice52/main.go
 
 run:
-	./dice52
+	cd clients/golang && ./bin/dice52
 
 clean:
-	rm -f dice52
+	rm -f clients/golang/bin/dice52
 
 test:
-	go test ./...
+	cd clients/golang && go test ./...
 
 # ============== Rust Targets ==============
 
 rust-fmt:
-	cargo fmt
+	cd clients/rust && cargo fmt
 
 rust-build:
-	cargo build --release
+	cd clients/rust && cargo build --release
 
 rust-test:
-	cargo test
+	cd clients/rust && cargo test
 
 rust-run:
-	cargo run --bin dice52-demo
+	cd clients/rust && cargo run --bin dice52-demo
 
 rust-clean:
-	cargo clean
+	cd clients/rust && cargo clean
 
 rust-bench:
-	cargo bench
+	cd clients/rust && cargo bench
 
 rust-doc:
-	cargo doc --open
+	cd clients/rust && cargo doc --open
 
 # ============== Combined Targets ==============
 

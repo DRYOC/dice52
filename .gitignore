@@ -1,7 +1,10 @@
 # Go binaries
-bin/*
+/bin/
+clients/golang/bin/
 dice52_pq_ratchet
 
-# Rust
+# Rust build artifacts
 /target/
+clients/rust/target/
 Cargo.lock
+clients/rust/Cargo.lock
