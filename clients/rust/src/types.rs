@@ -16,6 +16,13 @@ pub const MK_INFO: &[u8] = b"Dice52-MK";
 /// Ratchet info (Section 13)
 pub const RK_RATCHET_INFO: &[u8] = b"Dice52-RK-Ratchet";
 
+/// Hybrid KEM info string (Section 3.4)
+pub const HYBRID_SS_INFO: &[u8] = b"Dice52-Hybrid-SS";
+
+/// X25519 key sizes
+pub const X25519_PUBLIC_KEY_SIZE: usize = 32;
+pub const X25519_PRIVATE_KEY_SIZE: usize = 32;
+
 /// Ko enhancement info strings (Section 7.1)
 pub const KO_COMMIT_PREFIX: &[u8] = b"Dice52-Ko-Commit";
 pub const KO_COMMIT_KEY_INFO: &[u8] = b"Dice52-Ko-CommitKey";
@@ -77,12 +84,15 @@ impl ParanoidConfig {
     }
 }
 
-/// Handshake message for initial key exchange
+/// Handshake message for initial key exchange (Section 6.2)
+/// Now includes X25519 public key for hybrid KEM
 #[derive(Clone, Debug)]
 pub struct HandshakeMessage {
     /// Kyber ciphertext
     pub kyber_ct: Vec<u8>,
-    /// Dilithium signature
+    /// X25519 ephemeral public key (32 bytes)
+    pub ecdh_pub: Vec<u8>,
+    /// Dilithium signature over kyber_ct || ecdh_pub
     pub sig: Vec<u8>,
 }
 
@@ -95,12 +105,14 @@ pub struct Message {
     pub body: String,
 }
 
-/// Ratchet message for PQ ratchet key exchange
+/// Ratchet message for hybrid PQ ratchet key exchange (Section 12)
 #[derive(Clone, Debug)]
 pub struct RatchetMessage {
     /// New KEM public key (for initiator)
     pub pub_key: Option<Vec<u8>>,
-    /// Dilithium signature (for initiator)
+    /// X25519 public key (32 bytes)
+    pub ecdh_pub: Option<Vec<u8>>,
+    /// Dilithium signature over pub_key || ecdh_pub
     pub sig: Option<Vec<u8>>,
     /// KEM ciphertext (for responder)
     pub ct: Option<Vec<u8>>,

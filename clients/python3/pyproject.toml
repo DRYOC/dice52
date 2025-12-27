@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dice52"
-version = "0.1.0"
+version = "0.1.9"
 description = "Dice52-PQ: Post-Quantum Ratcheting Protocol"
 readme = "README.md"
 license = {text = "MIT"}

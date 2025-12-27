@@ -29,10 +29,12 @@ Dice52-PQ is a **post-quantum authenticated ratcheting secure messaging protocol
 
 Dice52-PQ combines:
 
-* **ML-KEM-768 (Kyber)** for key establishment and ratcheting
+* **Hybrid KEM** using **ML-KEM-768 (Kyber)** + **X25519** for key establishment and ratcheting
 * **ML-DSA-65 (Dilithium mode3)** for authentication
 * **HKDF-SHA-256** for key derivation
 * **ChaCha20-Poly1305** for authenticated encryption
+
+The hybrid KEM construction ensures that the shared secret remains secure provided **at least one** of the component KEMs remains secure (Kyber for post-quantum resistance, X25519 for classical security).
 
 Dice52-PQ is inspired by modern double-ratchet designs but introduces an **Ordering Key (`Ko`)**, which deterministically and secretly influences all key derivations.
 
@@ -87,12 +89,16 @@ Implementations MUST be considered experimental and SHOULD NOT be used where sec
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are to be interpreted as described in RFC 2119.
 
-| Symbol          | Meaning                  |
-| --------------- | ------------------------ |
-| `HKDF()`        | HKDF using SHA-256       |
-| `AEAD()`        | Authenticated encryption |
-| `Encapsulate()` | ML-KEM encapsulation     |
-| `Decapsulate()` | ML-KEM decapsulation     |
+| Symbol          | Meaning                         |
+| --------------- | ------------------------------- |
+| `HKDF()`        | HKDF using SHA-256              |
+| `AEAD()`        | Authenticated encryption        |
+| `Encapsulate()` | ML-KEM encapsulation            |
+| `Decapsulate()` | ML-KEM decapsulation            |
+| `X25519()`      | X25519 Diffie-Hellman function  |
+| `SS_hybrid`     | Combined hybrid shared secret   |
+| `SS_pq`         | Post-quantum (Kyber) shared secret |
+| `SS_ecdh`       | Classical (X25519) shared secret   |
 
 All byte concatenations are literal.
 
@@ -100,20 +106,47 @@ All byte concatenations are literal.
 
 ## 3. Cryptographic Primitives
 
-### 3.1 Post-Quantum Asymmetric
+### 3.1 Hybrid Key Encapsulation
+
+Dice52-PQ employs a **hybrid KEM** construction combining classical and post-quantum algorithms:
+
+| Component | Algorithm | Purpose |
+| --------- | --------- | ------- |
+| Post-Quantum KEM | ML-KEM-768 (Kyber) | Quantum-resistant key agreement |
+| Classical ECDH   | X25519             | Battle-tested classical security |
+
+The hybrid shared secret is computed as:
+
+```
+SS_hybrid = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")
+```
+
+This construction ensures that:
+* The shared secret is secure if **either** Kyber **or** X25519 remains unbroken
+* Even if a quantum computer breaks X25519, the Kyber component protects the secret
+* Even if Kyber is broken (e.g., lattice attacks advance), X25519 protects the secret
+
+### 3.2 Digital Signatures
 
 | Purpose            | Algorithm                   |
 | ------------------ | --------------------------- |
-| Key Encapsulation  | ML-KEM-768 (Kyber)          |
 | Digital Signatures | ML-DSA-65 (Dilithium mode3) |
 
-### 3.2 Symmetric
+### 3.3 Symmetric
 
 | Purpose        | Algorithm         |
 | -------------- | ----------------- |
 | Key Derivation | HKDF-SHA-256      |
 | Encryption     | ChaCha20-Poly1305 |
 | Hash           | SHA-256           |
+
+### 3.4 Hybrid KEM Info String
+
+```
+"Dice52-Hybrid-SS"
+```
+
+This info string MUST be used when deriving the hybrid shared secret.
 
 ---
 
@@ -140,44 +173,54 @@ MUST be prepended to all signed data.
 
 Each session maintains the following state:
 
-| Name        | Description                     |
-| ----------- | ------------------------------- |
-| `RK`        | Root Key                        |
-| `Ko`        | Ordering Key                    |
-| `CKs`       | Sending Chain Key               |
-| `CKr`       | Receiving Chain Key             |
-| `Ns`        | Sending message counter         |
-| `Nr`        | Receiving message counter       |
-| `Epoch`     | Rekey epoch counter             |
-| `SessionID` | Fixed 32-bit session identifier |
+| Name          | Description                        |
+| ------------- | ---------------------------------- |
+| `RK`          | Root Key                           |
+| `Ko`          | Ordering Key                       |
+| `CKs`         | Sending Chain Key                  |
+| `CKr`         | Receiving Chain Key                |
+| `Ns`          | Sending message counter            |
+| `Nr`          | Receiving message counter          |
+| `Epoch`       | Rekey epoch counter                |
+| `SessionID`   | Fixed 32-bit session identifier    |
+| `KEMPub`      | Kyber public key                   |
+| `KEMPriv`     | Kyber private key                  |
+| `ECDHPub`     | X25519 public key                  |
+| `ECDHPriv`    | X25519 private key                 |
+| `PeerKEMPub`  | Peer's Kyber public key            |
+| `PeerECDHPub` | Peer's X25519 public key           |
 
 All cryptographic secrets MUST be erased as soon as they are no longer needed.
 
 ---
 
-## 6. Authenticated Initial Handshake
+## 6. Authenticated Initial Handshake (Hybrid KEM)
 
 ### 6.1 Purpose
 
 The initial handshake establishes:
 
 * Mutual authentication
-* An initial shared secret `SS₀`
+* A hybrid shared secret `SS₀` combining both post-quantum and classical key agreement
 * Initial values for `RK`, `Ko`, `CKs`, and `CKr`
 
 ### 6.2 Handshake Message (Alice → Bob)
 
 Alice performs:
 
-1. `Encapsulate(Bob_KEM_Public)` → `(CT, SS₀)`
-2. Signs `SigContext || CT` using her Dilithium private key
+1. Generate ephemeral X25519 key pair: `(ECDHPriv, ECDHPub)`
+2. Kyber encapsulation: `Encapsulate(Bob_KEM_Public)` → `(CT_pq, SS_pq)`
+3. X25519 key agreement: `X25519(ECDHPriv, Bob_ECDH_Public)` → `SS_ecdh`
+4. Derive hybrid shared secret: `SS₀ = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")`
+5. Sign all handshake inputs: `Sign(SigContext || CT_pq || ECDHPub)` using her Dilithium private key
 
 She sends:
 
 ```
 HandshakeMessage {
-    KyberCT
-    DilithiumSignature
+    KyberCT       // Post-quantum ciphertext
+    ECDHPub       // X25519 ephemeral public key (32 bytes)
+    DilithiumSig  // Signature over both components
 }
 ```
 
@@ -185,10 +228,25 @@ HandshakeMessage {
 
 Bob:
 
-1. Verifies the Dilithium signature using Alice’s public key
-2. Decapsulates `CT` → `SS₀`
+1. Verifies the Dilithium signature using Alice's public key over `SigContext || KyberCT || ECDHPub`
+2. Decapsulates Kyber ciphertext: `Decapsulate(CT_pq)` → `SS_pq`
+3. X25519 key agreement: `X25519(Bob_ECDHPriv, Alice_ECDHPub)` → `SS_ecdh`
+4. Derive hybrid shared secret: `SS₀ = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")`
 
 If signature verification fails, the handshake MUST be aborted.
+
+### 6.4 Authentication Binding (Critical)
+
+The signature MUST cover **all** handshake components:
+
+```
+SignedData = SigContext || KyberCT || ECDHPub
+```
+
+This prevents:
+* **Mix-and-match attacks**: Attacker cannot substitute one component for another
+* **Algorithm substitution attacks**: Both key agreements are cryptographically bound
+* **Downgrade attacks**: Removing the X25519 component would invalidate the signature
 
 ---
 
@@ -379,7 +437,7 @@ Upon receipt:
 
 ---
 
-## 12. Post-Quantum Ratchet
+## 12. Hybrid Post-Quantum Ratchet
 
 ### 12.1 Purpose
 
@@ -387,18 +445,21 @@ The ratchet provides:
 
 * Forward secrecy
 * Post-compromise security
+* Hybrid security (quantum + classical)
 
 ### 12.2 Ratchet Initiation (Signed)
 
 Initiator:
 
-1. Generates new Kyber key pair
-2. Signs `SigContext || KyberPublicKey`
-3. Sends:
+1. Generates new Kyber key pair: `(KEMPub, KEMPriv)`
+2. Generates new X25519 key pair: `(ECDHPub, ECDHPriv)`
+3. Signs both public keys: `Sign(SigContext || KEMPub || ECDHPub)`
+4. Sends:
 
 ```
 RatchetMessage {
-    KyberPublicKey
+    KyberPublicKey    // New Kyber public key
+    ECDHPublicKey     // New X25519 public key (32 bytes)
     DilithiumSignature
 }
 ```
@@ -407,17 +468,29 @@ RatchetMessage {
 
 Responder:
 
-1. Verifies signature
-2. Encapsulates → `(CT, SSᵣ)`
-3. Updates keys
-4. Sends `CT`
+1. Verifies signature over `SigContext || KyberPublicKey || ECDHPublicKey`
+2. Generates ephemeral X25519 key pair for response: `(ECDHPub_resp, ECDHPriv_resp)`
+3. Kyber encapsulation: `Encapsulate(KyberPublicKey)` → `(CT_pq, SS_pq)`
+4. X25519 key agreement: `X25519(ECDHPriv_resp, ECDHPublicKey)` → `SS_ecdh`
+5. Derive hybrid shared secret: `SSᵣ = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")`
+6. Updates keys
+7. Sends:
+
+```
+RatchetResponse {
+    KyberCT           // Kyber ciphertext
+    ECDHPublicKey     // Responder's X25519 public key (32 bytes)
+}
+```
 
 ### 12.4 Ratchet Finalization
 
 Initiator:
 
-1. Decapsulates `CT` → `SSᵣ`
-2. Updates keys
+1. Decapsulates Kyber ciphertext: `Decapsulate(CT_pq)` → `SS_pq`
+2. X25519 key agreement: `X25519(ECDHPriv, Responder_ECDHPub)` → `SS_ecdh`
+3. Derive hybrid shared secret: `SSᵣ = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")`
+4. Updates keys
 
 ### 12.5 Ratchet Key Update
 
@@ -431,6 +504,8 @@ Epoch++
 Ns = 0
 Nr = 0
 ```
+
+Note: `SSᵣ` is the hybrid shared secret combining both Kyber and X25519.
 
 ---
 
@@ -465,14 +540,32 @@ Dice52-PQ provides:
 | Authentication                 | Yes    |
 | Forward Secrecy                | Yes    |
 | Post-Compromise Security       | Yes    |
-| Quantum Resistance             | Yes    |
+| Quantum Resistance             | Yes (Kyber component)   |
+| Classical Security             | Yes (X25519 component)  |
+| Hybrid Security                | Yes (secure unless both broken) |
 | Information-Theoretic Security | No     |
+
+### 15.1 Hybrid KEM Security
+
+The hybrid KEM construction provides security under the following assumptions:
+
+* **If X25519 is broken** (e.g., by a quantum computer): Kyber protects the shared secret
+* **If Kyber is broken** (e.g., lattice attacks advance): X25519 protects the shared secret
+* **Both must be broken** to compromise the shared secret
+
+This follows the standard robust combiner approach:
+```
+SS = KDF(SS₁ || SS₂)
+```
+
+Where `SS₁` and `SS₂` are independent shared secrets from different KEMs.
 
 ---
 
 ## 16. Limitations
 
-* Security depends on ML-KEM and ML-DSA assumptions
+* Security depends on hybrid KEM assumptions (ML-KEM + X25519) and ML-DSA
+* Hybrid KEM increases message sizes (additional 32-byte X25519 public key per handshake/ratchet)
 * No deniability guarantees
 * Implementations MUST use constant-time cryptography
 
@@ -497,14 +590,18 @@ Implementations MUST:
 * NIST FIPS 203 — ML-KEM
 * NIST FIPS 204 — ML-DSA
 * RFC 5869 — HKDF
+* RFC 7748 — Elliptic Curves for Security (X25519)
 * RFC 8439 — ChaCha20-Poly1305
 * Goldwasser, S. and Micali, S. (1982) — "Probabilistic Encryption & How To Play Mental Poker Keeping Secret All Partial Information," Proceedings of the 14th Annual ACM Symposium on Theory of Computing (STOC '82)
+* Bindel, N., et al. (2019) — "Hybrid Key Encapsulation Mechanisms and Authenticated Key Exchange" — IACR ePrint 2018/024
 
 ---
 
 ## 18. Conclusion
 
-Dice52-PQ is an **experimental** post-quantum ratcheting protocol that explores entropy-robust key derivation through the Ko (ordering key) concept. It combines ML-KEM and ML-DSA with a commit-reveal enhancement phase to provide defense-in-depth against cryptographic failures.
+Dice52-PQ is an **experimental** post-quantum ratcheting protocol that explores entropy-robust key derivation through the Ko (ordering key) concept. It employs a **hybrid KEM construction** combining ML-KEM-768 (Kyber) with X25519 to provide both quantum resistance and classical security.
+
+The hybrid KEM ensures that the shared secret remains secure provided at least one of the component KEMs remains secure. This follows the industry-standard approach used in TLS 1.3 hybrid modes, Signal PQ experiments, and OpenSSH PQ mode.
 
 The Ko Enhancement Phase (Section 7.1) provides additional security by introducing independent entropy from both parties into the ordering key derivation, ensuring defense-in-depth against single-point-of-failure compromises.
 

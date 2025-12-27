@@ -21,6 +21,9 @@ const (
 	// Ratchet info (Section 13)
 	RKRatchetInfo = "Dice52-RK-Ratchet"
 
+	// Hybrid KEM info string (Section 3.4)
+	HybridSSInfo = "Dice52-Hybrid-SS"
+
 	// Ko enhancement info strings (Section 7.1)
 	KoCommitPrefix  = "Dice52-Ko-Commit"
 	KoCommitKeyInfo = "Dice52-Ko-CommitKey"
@@ -30,6 +33,10 @@ const (
 	SigContext = "Dice52-PQ-Signature"
 
 	KeyLen = 32
+
+	// X25519 key sizes
+	X25519PublicKeySize  = 32
+	X25519PrivateKeySize = 32
 
 	// Section 14: Default maximum messages per epoch
 	DefaultMaxMessagesPerEpoch = 33
@@ -81,9 +88,16 @@ type Session struct {
 	Nr    uint64
 	Epoch uint64 // Section 5: Rekey epoch counter
 
-	// PQ ratchet keys
+	// PQ ratchet keys (Kyber)
 	KEMPriv *kyber768.PrivateKey
 	KEMPub  *kyber768.PublicKey
+
+	// X25519 keys for hybrid KEM (Section 3.1)
+	ECDHPriv []byte // X25519 private key (32 bytes)
+	ECDHPub  []byte // X25519 public key (32 bytes)
+
+	// Peer's X25519 public key
+	PeerECDHPub []byte
 
 	// 🔐 Identity keys (Dilithium)
 	IDPriv *mode3.PrivateKey
@@ -145,10 +159,12 @@ type KoRevealMessage struct {
 	RevealCT []byte // Encrypted local entropy
 }
 
-// HandshakeMessage is used to send and receive the handshake messages
+// HandshakeMessage is used to send and receive the handshake messages (Section 6.2)
+// Now includes X25519 public key for hybrid KEM
 type HandshakeMessage struct {
-	KyberCT []byte
-	Sig     []byte
+	KyberCT []byte // Post-quantum ciphertext
+	ECDHPub []byte // X25519 ephemeral public key (32 bytes)
+	Sig     []byte // Signature over KyberCT || ECDHPub
 }
 
 // Message represents an encrypted message with header and body
@@ -157,11 +173,12 @@ type Message struct {
 	Body   string
 }
 
-// RatchetMessage is used for PQ ratchet key exchange
+// RatchetMessage is used for hybrid PQ ratchet key exchange (Section 12)
 type RatchetMessage struct {
-	PubKey []byte
-	Sig    []byte
-	CT     []byte
+	PubKey  []byte // Kyber public key (for initiator)
+	ECDHPub []byte // X25519 public key (32 bytes)
+	Sig     []byte // Signature over PubKey || ECDHPub
+	CT      []byte // Kyber ciphertext (for responder)
 }
 
 // Header includes all AD fields required by Section 11.1

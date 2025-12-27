@@ -4,8 +4,8 @@ use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 
 use crate::types::{
-    CKR_INFO, CKS_INFO, KEY_LEN, KO_COMMIT_KEY_INFO, KO_COMMIT_PREFIX, KO_ENHANCED_INFO, KO_INFO,
-    MK_INFO, RK_INFO, RK_RATCHET_INFO,
+    CKR_INFO, CKS_INFO, HYBRID_SS_INFO, KEY_LEN, KO_COMMIT_KEY_INFO, KO_COMMIT_PREFIX,
+    KO_ENHANCED_INFO, KO_INFO, MK_INFO, RK_INFO, RK_RATCHET_INFO,
 };
 
 /// Derives a key using HKDF-SHA256 (Section 3.2)
@@ -24,6 +24,22 @@ fn hkdf_expand_with_salt(secret: &[u8], salt: &[u8], info: &[u8], out_len: usize
     hk.expand(info, &mut out)
         .expect("HKDF expansion should not fail");
     out
+}
+
+/// Derives hybrid shared secret from Kyber and X25519 shared secrets (Section 3.1)
+///
+/// SS_hybrid = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")
+///
+/// # Arguments
+/// * `ss_pq` - Post-quantum (Kyber) shared secret
+/// * `ss_ecdh` - Classical (X25519) shared secret
+///
+/// # Returns
+/// Combined hybrid shared secret
+pub fn derive_hybrid_shared_secret(ss_pq: &[u8], ss_ecdh: &[u8]) -> [u8; KEY_LEN] {
+    let mut combined = ss_pq.to_vec();
+    combined.extend_from_slice(ss_ecdh);
+    hkdf_expand(&combined, HYBRID_SS_INFO)
 }
 
 /// Derives RK and Ko from shared secret (Section 8)

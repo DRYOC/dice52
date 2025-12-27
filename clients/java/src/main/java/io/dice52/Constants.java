@@ -30,6 +30,13 @@ public final class Constants {
     // Ratchet info (Section 13)
     public static final byte[] RK_RATCHET_INFO = "Dice52-RK-Ratchet".getBytes(StandardCharsets.UTF_8);
 
+    // Hybrid KEM info string (Section 3.4)
+    public static final byte[] HYBRID_SS_INFO = "Dice52-Hybrid-SS".getBytes(StandardCharsets.UTF_8);
+
+    // X25519 key sizes
+    public static final int X25519_PUBLIC_KEY_SIZE = 32;
+    public static final int X25519_PRIVATE_KEY_SIZE = 32;
+
     // Ko enhancement info strings (Section 7.1)
     public static final byte[] KO_COMMIT_PREFIX = "Dice52-Ko-Commit".getBytes(StandardCharsets.UTF_8);
     public static final byte[] KO_COMMIT_KEY_INFO = "Dice52-Ko-CommitKey".getBytes(StandardCharsets.UTF_8);

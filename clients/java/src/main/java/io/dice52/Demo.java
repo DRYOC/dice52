@@ -1,6 +1,8 @@
 package io.dice52;
 
 import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
+import org.bouncycastle.crypto.params.X25519PrivateKeyParameters;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.pqc.crypto.crystals.dilithium.*;
 import org.bouncycastle.pqc.crypto.crystals.kyber.*;
@@ -9,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.Security;
 
 /**
- * Dice52 Demo - Quantum-safe ratchet protocol demonstration.
+ * Dice52 Demo - Quantum-safe ratchet protocol demonstration with hybrid KEM.
  */
 public class Demo {
 
@@ -19,7 +21,7 @@ public class Demo {
 
         System.out.println("=== Dice52 PQ Ratchet Demo (Java) ===\n");
 
-        // Generate KEM key pairs for Alice and Bob
+        // Generate Kyber KEM key pairs for Alice and Bob
         System.out.println("Generating Kyber768 key pairs...");
         AsymmetricCipherKeyPair kemKeysA = Handshake.generateKemKeypair();
         KyberPublicKeyParameters kemPubA = (KyberPublicKeyParameters) kemKeysA.getPublic();
@@ -28,6 +30,16 @@ public class Demo {
         AsymmetricCipherKeyPair kemKeysB = Handshake.generateKemKeypair();
         KyberPublicKeyParameters kemPubB = (KyberPublicKeyParameters) kemKeysB.getPublic();
         KyberPrivateKeyParameters kemPrivB = (KyberPrivateKeyParameters) kemKeysB.getPrivate();
+
+        // Generate X25519 key pairs for hybrid KEM
+        System.out.println("Generating X25519 key pairs...");
+        AsymmetricCipherKeyPair ecdhKeysA = Handshake.generateX25519Keypair();
+        X25519PublicKeyParameters ecdhPubA = (X25519PublicKeyParameters) ecdhKeysA.getPublic();
+        X25519PrivateKeyParameters ecdhPrivA = (X25519PrivateKeyParameters) ecdhKeysA.getPrivate();
+
+        AsymmetricCipherKeyPair ecdhKeysB = Handshake.generateX25519Keypair();
+        X25519PublicKeyParameters ecdhPubB = (X25519PublicKeyParameters) ecdhKeysB.getPublic();
+        X25519PrivateKeyParameters ecdhPrivB = (X25519PrivateKeyParameters) ecdhKeysB.getPrivate();
 
         // Generate Dilithium identity key pairs
         System.out.println("Generating Dilithium3 identity keys...");
@@ -39,21 +51,22 @@ public class Demo {
         DilithiumPublicKeyParameters idPubB = (DilithiumPublicKeyParameters) idKeysB.getPublic();
         DilithiumPrivateKeyParameters idPrivB = (DilithiumPrivateKeyParameters) idKeysB.getPrivate();
 
-        // Alice encapsulates to Bob's public key
-        System.out.println("\nAlice encapsulating to Bob's public key...");
-        Handshake.EncapsulationResult encapResult = Handshake.initiatorEncapsulate(kemPubB);
-        byte[] ssAlice = encapResult.sharedSecret;
-        byte[] ct = encapResult.ciphertext;
+        // Alice performs hybrid encapsulation to Bob's public keys (Kyber + X25519)
+        System.out.println("\nAlice performing hybrid encapsulation to Bob's public keys...");
+        Handshake.HybridEncapsulationResult hybridResult = Handshake.initiatorHybridEncapsulate(kemPubB, ecdhPubB);
+        byte[] ssAlice = hybridResult.hybridSharedSecret;
 
-        // Bob decapsulates
-        System.out.println("Bob decapsulating...");
-        byte[] ssBob = Handshake.responderDecapsulate(kemPrivB, ct);
+        // Bob performs hybrid decapsulation
+        System.out.println("Bob performing hybrid decapsulation...");
+        X25519PublicKeyParameters aliceEcdhPub = new X25519PublicKeyParameters(hybridResult.ecdhPub, 0);
+        byte[] ssBob = Handshake.responderHybridDecapsulate(kemPrivB, ecdhPrivB, hybridResult.kyberCiphertext,
+                hybridResult.ecdhPub);
 
         // Verify shared secrets match
         if (!java.util.Arrays.equals(ssAlice, ssBob)) {
-            throw new RuntimeException("Shared secrets don't match!");
+            throw new RuntimeException("Hybrid shared secrets don't match!");
         }
-        System.out.println("✓ Shared secrets match!");
+        System.out.println("✓ Hybrid shared secrets match!");
 
         // Derive initial keys
         System.out.println("\nDeriving initial keys...");
@@ -74,7 +87,7 @@ public class Demo {
         byte[] cksBob = chainKeysBob[0];
         byte[] ckrBob = chainKeysBob[1];
 
-        // Create sessions
+        // Create sessions with X25519 keys for future hybrid ratchets
         Session alice = new Session(
                 1,
                 rkAlice,
@@ -83,6 +96,9 @@ public class Demo {
                 ckrAlice,
                 kemPubA,
                 kemPrivA,
+                ecdhPubA,
+                ecdhPrivA,
+                ecdhPubB,
                 idPubA,
                 idPrivA,
                 idPubB,
@@ -98,6 +114,9 @@ public class Demo {
                 cksBob, // Bob's receive = Alice's send
                 kemPubB,
                 kemPrivB,
+                ecdhPubB,
+                ecdhPrivB,
+                ecdhPubA,
                 idPubB,
                 idPrivB,
                 idPubA,
@@ -134,25 +153,28 @@ public class Demo {
 
         System.out.println("\n✓ All messages exchanged successfully!");
 
-        // Demonstrate ratcheting
-        System.out.println("\n--- PQ Ratchet ---");
-        System.out.println("Alice initiating ratchet...");
+        // Demonstrate hybrid ratcheting
+        System.out.println("\n--- Hybrid PQ Ratchet ---");
+        System.out.println("Alice initiating hybrid ratchet...");
         Types.RatchetMessage ratchetMsg = alice.initiateRatchet();
-        System.out.println("  Public key size: " + ratchetMsg.pubKey.length + " bytes");
+        System.out.println("  Kyber public key size: " + ratchetMsg.pubKey.length + " bytes");
+        if (ratchetMsg.ecdhPub != null) {
+            System.out.println("  X25519 public key size: " + ratchetMsg.ecdhPub.length + " bytes");
+        }
         System.out.println("  Signature size: " + ratchetMsg.sig.length + " bytes");
 
-        System.out.println("Bob responding to ratchet...");
+        System.out.println("Bob responding to hybrid ratchet...");
         Types.RatchetMessage response = bob.respondRatchet(ratchetMsg);
-        System.out.println("  Ciphertext size: " + response.ct.length + " bytes");
+        System.out.println("  Kyber ciphertext size: " + response.ct.length + " bytes");
 
-        System.out.println("Alice finalizing ratchet...");
+        System.out.println("Alice finalizing hybrid ratchet...");
         alice.finalizeRatchet(response);
 
-        System.out.println("✓ Ratchet complete! New epoch: " + alice.getEpoch());
+        System.out.println("✓ Hybrid ratchet complete! New epoch: " + alice.getEpoch());
 
         // Send message after ratchet
         System.out.println("\n--- Post-Ratchet Message ---");
-        String postRatchetMsg = "This message uses new keys!";
+        String postRatchetMsg = "This message uses new hybrid keys!";
         System.out.println("Alice sends: \"" + postRatchetMsg + "\"");
         Types.Message msg = alice.send(postRatchetMsg.getBytes(StandardCharsets.UTF_8));
         byte[] decrypted = bob.receive(msg);

@@ -5,6 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2025-12-27
+
+### Added
+
+#### Hybrid KEM (Kyber + X25519)
+- **Defense-in-depth cryptography**: Shared secret remains secure if at least one of Kyber or X25519 remains secure
+- **Robust combiner**: `SS_hybrid = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")`
+- **Updated RFC specification**: Section 3.1 now specifies hybrid KEM construction
+
+#### New X25519 Functions (All Languages)
+| Language | Key Generation | Shared Secret |
+|----------|---------------|---------------|
+| Go | `GenerateX25519Keypair()` | `X25519SharedSecret()` |
+| Rust | `generate_x25519_keypair()` | `x25519_shared_secret()` |
+| Python | `generate_x25519_keypair()` | `x25519_shared_secret()` |
+| Java | `Handshake.generateX25519Keypair()` | `Handshake.x25519SharedSecret()` |
+
+#### Hybrid Encapsulation API (All Languages)
+| Language | Initiator | Responder |
+|----------|-----------|-----------|
+| Go | `InitiatorHybridEncapsulate()` | `ResponderHybridDecapsulate()` |
+| Rust | `initiator_hybrid_encapsulate()` | `responder_hybrid_decapsulate()` |
+| Python | `initiator_hybrid_encapsulate()` | `responder_hybrid_decapsulate()` |
+| Java | `Handshake.initiatorHybridEncapsulate()` | `Handshake.responderHybridDecapsulate()` |
+
+#### Session X25519 Fields
+- **Go**: `ECDHPub`, `ECDHPriv`, `PeerECDHPub` fields in `Session` struct
+- **Rust**: `new_with_ecdh()` constructor for explicit X25519 keys
+- **Python**: `ecdh_pub`, `ecdh_priv`, `peer_ecdh_pub` optional constructor parameters
+- **Java**: New constructor overload accepting `X25519PublicKeyParameters` and `X25519PrivateKeyParameters`
+
+### Changed
+
+#### Hybrid Handshake (Section 6)
+- Initiator now generates ephemeral X25519 key pair alongside Kyber encapsulation
+- Signature covers both Kyber ciphertext and X25519 public key: `Sign(SigContext || KyberCT || ECDHPub)`
+- `HandshakeMessage` includes `ECDHPub` field
+
+#### Hybrid Ratchet (Section 12)
+- Ratchet initiator generates both Kyber and X25519 key pairs
+- `RatchetMessage` includes `ECDHPub` field for X25519 public key
+- Signature covers both Kyber public key and X25519 public key
+- Chain key assignment now correctly swaps for initiator vs responder
+
+### Documentation
+
+- Updated README with hybrid KEM examples for Go and Rust
+- Updated all demo files to demonstrate hybrid encapsulation flow
+- RFC Section 3.1 updated to specify hybrid KEM algorithm
+- RFC Section 15 updated with hybrid KEM security properties
+
+### Dependencies
+
+| Language | New Dependency | Purpose |
+|----------|---------------|---------|
+| Go | `github.com/cloudflare/circl/dh/x25519` | X25519 ECDH |
+| Rust | `x25519-dalek = "2.0"` | X25519 ECDH |
+| Python | `cryptography` | X25519 via pyca/cryptography |
+| Java | (Bouncy Castle already includes) | X25519 via BC |
+
+---
+
 ## [0.1.8] - 2025-12-26
 
 ### Added
@@ -235,6 +297,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.1.9]: https://github.com/dryoc/dice52/releases/tag/v0.1.9
 [0.1.8]: https://github.com/dryoc/dice52/releases/tag/v0.1.8
 [0.1.7]: https://github.com/dryoc/dice52/releases/tag/v0.1.7
 [0.1.6]: https://github.com/dryoc/dice52/releases/tag/v0.1.6

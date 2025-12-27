@@ -4,6 +4,9 @@
 kyber-py>=0.2.0
 dilithium-py>=0.1.0
 
+# Classical cryptography (X25519 for hybrid KEM)
+cryptography>=41.0.0
+
 # Symmetric cryptography
 pycryptodome>=3.20.0
 

@@ -4,6 +4,8 @@ import org.bouncycastle.crypto.AsymmetricCipherKeyPair;
 import org.bouncycastle.crypto.modes.ChaCha20Poly1305;
 import org.bouncycastle.crypto.params.AEADParameters;
 import org.bouncycastle.crypto.params.KeyParameter;
+import org.bouncycastle.crypto.params.X25519PrivateKeyParameters;
+import org.bouncycastle.crypto.params.X25519PublicKeyParameters;
 import org.bouncycastle.pqc.crypto.crystals.dilithium.*;
 import org.bouncycastle.pqc.crypto.crystals.kyber.*;
 
@@ -31,6 +33,8 @@ public class Session {
 
     private KyberPublicKeyParameters kemPub; // Our KEM public key
     private KyberPrivateKeyParameters kemPriv; // Our KEM private key
+    private X25519PublicKeyParameters ecdhPub; // Our X25519 public key for hybrid KEM
+    private X25519PrivateKeyParameters ecdhPriv; // Our X25519 private key for hybrid KEM
     private DilithiumPublicKeyParameters idPub; // Our identity public key
     private DilithiumPrivateKeyParameters idPriv; // Our identity private key
     private DilithiumPublicKeyParameters peerId; // Peer's identity public key
@@ -65,6 +69,61 @@ public class Session {
         this.ckr = ckr;
         this.kemPub = kemPub;
         this.kemPriv = kemPriv;
+
+        // Generate initial X25519 keypair for hybrid KEM
+        AsymmetricCipherKeyPair ecdhKeyPair = Handshake.generateX25519Keypair();
+        this.ecdhPub = (X25519PublicKeyParameters) ecdhKeyPair.getPublic();
+        this.ecdhPriv = (X25519PrivateKeyParameters) ecdhKeyPair.getPrivate();
+
+        this.idPub = idPub;
+        this.idPriv = idPriv;
+        this.peerId = peerId;
+        this.isInitiator = isInitiator;
+
+        this.ns = 0;
+        this.nr = 0;
+        this.epoch = 0;
+
+        this.koEnhancement = null;
+        this.koEnhanced = false;
+
+        this.paranoidConfig = new Types.ParanoidConfig();
+        this.lastKoEnhancedEpoch = 0;
+        this.pendingKoReenhance = false;
+        this.lastSharedSecret = null;
+    }
+
+    /**
+     * Create a new session with explicit X25519 keys for hybrid KEM.
+     */
+    public Session(
+            int sessionId,
+            byte[] rk,
+            byte[] ko,
+            byte[] cks,
+            byte[] ckr,
+            KyberPublicKeyParameters kemPub,
+            KyberPrivateKeyParameters kemPriv,
+            X25519PublicKeyParameters ecdhPub,
+            X25519PrivateKeyParameters ecdhPriv,
+            X25519PublicKeyParameters peerEcdhPub,
+            DilithiumPublicKeyParameters idPub,
+            DilithiumPrivateKeyParameters idPriv,
+            DilithiumPublicKeyParameters peerId,
+            boolean isInitiator) {
+        this.sessionId = sessionId;
+        this.rk = rk;
+        this.ko = ko;
+        this.cks = cks;
+        this.ckr = ckr;
+        this.kemPub = kemPub;
+        this.kemPriv = kemPriv;
+
+        // Use provided X25519 keys
+        this.ecdhPub = ecdhPub;
+        this.ecdhPriv = ecdhPriv;
+        // peerEcdhPub is stored for future hybrid ratchets
+
         this.idPub = idPub;
         this.idPriv = idPriv;
         this.peerId = peerId;
@@ -199,7 +258,7 @@ public class Session {
         }
     }
 
-    private void applyRatchet(byte[] ss) {
+    private void applyRatchet(byte[] ss, boolean asInitiator) {
         // RK = HKDF(RK || SS || Ko, "Dice52-RK-Ratchet")
         byte[] combined = Kdf.concat(rk, ss, ko);
         rk = Kdf.hkdfExpand(combined, Constants.RK_RATCHET_INFO);
@@ -209,8 +268,15 @@ public class Session {
 
         // Reinitialize chain keys
         byte[][] chainKeys = Kdf.initChainKeys(rk, ko);
-        cks = chainKeys[0];
-        ckr = chainKeys[1];
+        if (asInitiator) {
+            // Ratchet initiator: CKs sends, CKr receives
+            cks = chainKeys[0];
+            ckr = chainKeys[1];
+        } else {
+            // Ratchet responder: swap keys (responder's send = initiator's receive)
+            cks = chainKeys[1];
+            ckr = chainKeys[0];
+        }
         ns = 0;
         nr = 0;
         epoch++;
@@ -226,44 +292,51 @@ public class Session {
     }
 
     /**
-     * Initiate a PQ ratchet with Dilithium signature.
+     * Initiate a hybrid PQ ratchet with Dilithium signature (Section 12.2).
      */
     public Types.RatchetMessage initiateRatchet() {
         lock.lock();
         try {
+            // Generate new Kyber key pair
             AsymmetricCipherKeyPair keypair = Handshake.generateKemKeypair();
             kemPub = (KyberPublicKeyParameters) keypair.getPublic();
             kemPriv = (KyberPrivateKeyParameters) keypair.getPrivate();
 
+            // Generate new X25519 key pair
+            AsymmetricCipherKeyPair ecdhKeypair = Handshake.generateX25519Keypair();
+            ecdhPub = (X25519PublicKeyParameters) ecdhKeypair.getPublic();
+            ecdhPriv = (X25519PrivateKeyParameters) ecdhKeypair.getPrivate();
+
             // Get public key bytes
             byte[] pubKeyBytes = kemPub.getEncoded();
+            byte[] ecdhPubBytes = ecdhPub.getEncoded();
 
-            // Sign: context || public key
-            byte[] toSign = Kdf.concat(Constants.SIG_CONTEXT, pubKeyBytes);
+            // Sign: context || KEMPub || ECDHPub
+            byte[] toSign = Kdf.concat(Constants.SIG_CONTEXT, pubKeyBytes, ecdhPubBytes);
 
             DilithiumSigner signer = new DilithiumSigner();
             signer.init(true, idPriv);
             byte[] signature = signer.generateSignature(toSign);
 
-            return new Types.RatchetMessage(pubKeyBytes, signature, null);
+            return new Types.RatchetMessage(pubKeyBytes, ecdhPubBytes, signature, null);
         } finally {
             lock.unlock();
         }
     }
 
     /**
-     * Respond to initiator's ratchet message (verify and encapsulate).
+     * Respond to initiator's hybrid ratchet message (Section 12.3).
      */
     public Types.RatchetMessage respondRatchet(Types.RatchetMessage msg)
             throws Dice52Exception.InvalidRatchetSignature, Dice52Exception.KemError {
         lock.lock();
         try {
-            if (msg.pubKey == null || msg.sig == null) {
-                throw new Dice52Exception.KemError("Missing public key or signature");
+            if (msg.pubKey == null || msg.sig == null || msg.ecdhPub == null) {
+                throw new Dice52Exception.KemError("Missing public key, signature, or ECDH key");
             }
 
-            // Verify signature
-            byte[] toVerify = Kdf.concat(Constants.SIG_CONTEXT, msg.pubKey);
+            // Verify signature over SigContext || KEMPub || ECDHPub
+            byte[] toVerify = Kdf.concat(Constants.SIG_CONTEXT, msg.pubKey, msg.ecdhPub);
 
             DilithiumSigner verifier = new DilithiumSigner();
             verifier.init(false, peerId);
@@ -272,40 +345,56 @@ public class Session {
                 throw new Dice52Exception.InvalidRatchetSignature("Ratchet signature verification failed");
             }
 
-            // Parse peer's public key and encapsulate
-            KyberPublicKeyParameters peerPub = new KyberPublicKeyParameters(Handshake.KYBER_PARAMS, msg.pubKey);
+            // Parse peer's public keys
+            KyberPublicKeyParameters peerKemPub = new KyberPublicKeyParameters(Handshake.KYBER_PARAMS, msg.pubKey);
+            X25519PublicKeyParameters peerEcdhPub = new X25519PublicKeyParameters(msg.ecdhPub, 0);
 
+            // Generate ephemeral X25519 key pair for response
+            AsymmetricCipherKeyPair respEcdhKeypair = Handshake.generateX25519Keypair();
+            X25519PublicKeyParameters respEcdhPub = (X25519PublicKeyParameters) respEcdhKeypair.getPublic();
+            X25519PrivateKeyParameters respEcdhPriv = (X25519PrivateKeyParameters) respEcdhKeypair.getPrivate();
+
+            // Kyber encapsulation
             KyberKEMGenerator kemGen = new KyberKEMGenerator(SECURE_RANDOM);
-            org.bouncycastle.crypto.SecretWithEncapsulation encap = kemGen.generateEncapsulated(peerPub);
+            org.bouncycastle.crypto.SecretWithEncapsulation encap = kemGen.generateEncapsulated(peerKemPub);
 
-            // Apply ratchet
-            applyRatchet(encap.getSecret());
+            // X25519 key agreement
+            byte[] ssEcdh = Handshake.x25519SharedSecret(respEcdhPriv, peerEcdhPub);
 
-            // Responder needs chain keys swapped relative to initiator
-            byte[] tmp = cks;
-            cks = ckr;
-            ckr = tmp;
+            // Derive hybrid shared secret
+            byte[] ssHybrid = Kdf.deriveHybridSharedSecret(encap.getSecret(), ssEcdh);
 
-            return new Types.RatchetMessage(null, null, encap.getEncapsulation());
+            // Apply ratchet with hybrid shared secret (responder)
+            applyRatchet(ssHybrid, false);
+
+            return new Types.RatchetMessage(null, respEcdhPub.getEncoded(), null, encap.getEncapsulation());
         } finally {
             lock.unlock();
         }
     }
 
     /**
-     * Finalize the ratchet on the initiator side.
+     * Finalize the hybrid ratchet on the initiator side (Section 12.4).
      */
     public void finalizeRatchet(Types.RatchetMessage msg) throws Dice52Exception.KemError {
         lock.lock();
         try {
-            if (msg.ct == null) {
-                throw new Dice52Exception.KemError("Missing ciphertext");
+            if (msg.ct == null || msg.ecdhPub == null) {
+                throw new Dice52Exception.KemError("Missing ciphertext or ECDH key");
             }
 
+            // Decapsulate Kyber ciphertext
             KyberKEMExtractor extractor = new KyberKEMExtractor(kemPriv);
-            byte[] ss = extractor.extractSecret(msg.ct);
+            byte[] ssPq = extractor.extractSecret(msg.ct);
 
-            applyRatchet(ss);
+            // X25519 key agreement with responder's ephemeral public key
+            X25519PublicKeyParameters peerEcdhPub = new X25519PublicKeyParameters(msg.ecdhPub, 0);
+            byte[] ssEcdh = Handshake.x25519SharedSecret(ecdhPriv, peerEcdhPub);
+
+            // Derive hybrid shared secret
+            byte[] ssHybrid = Kdf.deriveHybridSharedSecret(ssPq, ssEcdh);
+
+            applyRatchet(ssHybrid, true); // Initiator
         } finally {
             lock.unlock();
         }

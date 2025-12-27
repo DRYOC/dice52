@@ -45,14 +45,17 @@ public class Types {
     }
 
     /**
-     * Handshake message for initial key exchange.
+     * Handshake message for initial key exchange (Section 6.2).
+     * Now includes X25519 public key for hybrid KEM.
      */
     public static class HandshakeMessage {
-        public byte[] kyberCt;
-        public byte[] sig;
+        public byte[] kyberCt; // Kyber ciphertext
+        public byte[] ecdhPub; // X25519 ephemeral public key (32 bytes)
+        public byte[] sig; // Signature over kyberCt || ecdhPub
 
-        public HandshakeMessage(byte[] kyberCt, byte[] sig) {
+        public HandshakeMessage(byte[] kyberCt, byte[] ecdhPub, byte[] sig) {
             this.kyberCt = kyberCt;
+            this.ecdhPub = ecdhPub;
             this.sig = sig;
         }
     }
@@ -71,18 +74,20 @@ public class Types {
     }
 
     /**
-     * Ratchet message for PQ ratchet key exchange.
+     * Ratchet message for hybrid PQ ratchet key exchange (Section 12).
      */
     public static class RatchetMessage {
         public byte[] pubKey; // New KEM public key (for initiator)
-        public byte[] sig; // Dilithium signature (for initiator)
+        public byte[] ecdhPub; // X25519 public key (32 bytes)
+        public byte[] sig; // Dilithium signature over pubKey || ecdhPub
         public byte[] ct; // KEM ciphertext (for responder)
 
         public RatchetMessage() {
         }
 
-        public RatchetMessage(byte[] pubKey, byte[] sig, byte[] ct) {
+        public RatchetMessage(byte[] pubKey, byte[] ecdhPub, byte[] sig, byte[] ct) {
             this.pubKey = pubKey;
+            this.ecdhPub = ecdhPub;
             this.sig = sig;
             this.ct = ct;
         }

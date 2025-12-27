@@ -31,8 +31,9 @@ from .kdf import (
     commit_entropy,
     verify_commit,
     derive_enhanced_ko,
+    derive_hybrid_shared_secret,
 )
-from .handshake import generate_kem_keypair
+from .handshake import generate_kem_keypair, generate_x25519_keypair, x25519_shared_secret
 from .error import (
     Dice52Error,
     EpochExhausted,
@@ -62,6 +63,9 @@ class Session:
         id_priv: bytes,
         peer_id: bytes,
         is_initiator: bool = True,
+        ecdh_pub: Optional[bytes] = None,
+        ecdh_priv: Optional[bytes] = None,
+        peer_ecdh_pub: Optional[bytes] = None,
     ):
         """
         Create a new session with the given parameters.
@@ -78,6 +82,9 @@ class Session:
             id_priv: Our identity private key
             peer_id: Peer's identity public key
             is_initiator: Whether this session is the initiator
+            ecdh_pub: Our X25519 public key (optional, auto-generated if not provided)
+            ecdh_priv: Our X25519 private key (optional, auto-generated if not provided)
+            peer_ecdh_pub: Peer's X25519 public key (optional, for hybrid ratchets)
         """
         self._lock = threading.Lock()
         
@@ -92,6 +99,15 @@ class Session:
         
         self._kem_pub = kem_pub
         self._kem_priv = kem_priv
+        
+        # X25519 keys for hybrid KEM (Section 3.1)
+        if ecdh_pub is not None and ecdh_priv is not None:
+            self._ecdh_pub = ecdh_pub
+            self._ecdh_priv = ecdh_priv
+        else:
+            self._ecdh_pub, self._ecdh_priv = generate_x25519_keypair()
+        self._peer_ecdh_pub = peer_ecdh_pub
+        
         self._id_pub = id_pub
         self._id_priv = id_priv
         self._peer_id = peer_id
@@ -222,7 +238,7 @@ class Session:
             self._nr = header.msg_num + 1
             return pt
     
-    def _apply_ratchet(self, ss: bytes) -> None:
+    def _apply_ratchet(self, ss: bytes, as_initiator: bool) -> None:
         """Internal ratchet application."""
         # RK = HKDF(RK || SS || Ko, "Dice52-RK-Ratchet")
         combined = self._rk + ss + self._ko
@@ -232,7 +248,15 @@ class Session:
         self._ko = hkdf_expand(self._rk, KO_INFO)
         
         # Reinitialize chain keys
-        self._cks, self._ckr = init_chain_keys(self._rk, self._ko)
+        cks, ckr = init_chain_keys(self._rk, self._ko)
+        if as_initiator:
+            # Ratchet initiator: CKs sends, CKr receives
+            self._cks = cks
+            self._ckr = ckr
+        else:
+            # Ratchet responder: swap keys (responder's send = initiator's receive)
+            self._cks = ckr
+            self._ckr = cks
         self._ns = 0
         self._nr = 0
         self._epoch += 1
@@ -246,57 +270,76 @@ class Session:
                 self._last_shared_secret = ss
     
     def initiate_ratchet(self) -> RatchetMessage:
-        """Initiate a PQ ratchet with Dilithium signature."""
+        """Initiate a hybrid PQ ratchet with Dilithium signature (Section 12.2)."""
         with self._lock:
+            # Generate new Kyber key pair
             self._kem_pub, self._kem_priv = generate_kem_keypair()
             
-            # Sign: context || public key
-            to_sign = SIG_CONTEXT + self._kem_pub
+            # Generate new X25519 key pair
+            self._ecdh_pub, self._ecdh_priv = generate_x25519_keypair()
+            
+            # Sign: context || KEMPub || ECDHPub
+            to_sign = SIG_CONTEXT + self._kem_pub + self._ecdh_pub
             
             signature = Dilithium3.sign(self._id_priv, to_sign)
             
             return RatchetMessage(
                 pub_key=self._kem_pub,
+                ecdh_pub=self._ecdh_pub,
                 sig=signature,
                 ct=None,
             )
     
     def respond_ratchet(self, msg: RatchetMessage) -> RatchetMessage:
-        """Respond to initiator's ratchet message (verify and encapsulate)."""
+        """Respond to initiator's hybrid ratchet message (Section 12.3)."""
         with self._lock:
-            if msg.pub_key is None or msg.sig is None:
-                raise KemError("Missing public key or signature in ratchet message")
+            if msg.pub_key is None or msg.sig is None or msg.ecdh_pub is None:
+                raise KemError("Missing public key, signature, or ECDH key in ratchet message")
             
-            # Verify signature
-            to_verify = SIG_CONTEXT + msg.pub_key
+            # Verify signature over SigContext || KEMPub || ECDHPub
+            to_verify = SIG_CONTEXT + msg.pub_key + msg.ecdh_pub
             
             if not Dilithium3.verify(self._peer_id, to_verify, msg.sig):
                 raise InvalidRatchetSignature("Ratchet signature verification failed")
             
-            # Encapsulate to peer's new public key
-            shared_secret, ciphertext = Kyber768.encaps(msg.pub_key)
+            # Generate ephemeral X25519 key pair for response
+            ecdh_pub, ecdh_priv = generate_x25519_keypair()
             
-            # Apply ratchet
-            self._apply_ratchet(shared_secret)
+            # Kyber encapsulation
+            ss_pq, ciphertext = Kyber768.encaps(msg.pub_key)
             
-            # Responder needs chain keys swapped relative to initiator
-            self._cks, self._ckr = self._ckr, self._cks
+            # X25519 key agreement
+            ss_ecdh = x25519_shared_secret(ecdh_priv, msg.ecdh_pub)
+            
+            # Derive hybrid shared secret
+            ss_hybrid = derive_hybrid_shared_secret(ss_pq, ss_ecdh)
+            
+            # Apply ratchet with hybrid shared secret (responder)
+            self._apply_ratchet(ss_hybrid, as_initiator=False)
             
             return RatchetMessage(
                 pub_key=None,
+                ecdh_pub=ecdh_pub,
                 sig=None,
                 ct=ciphertext,
             )
     
     def finalize_ratchet(self, msg: RatchetMessage) -> None:
-        """Finalize the ratchet on the initiator side."""
+        """Finalize the hybrid ratchet on the initiator side (Section 12.4)."""
         with self._lock:
-            if msg.ct is None:
-                raise KemError("Missing ciphertext in ratchet message")
+            if msg.ct is None or msg.ecdh_pub is None:
+                raise KemError("Missing ciphertext or ECDH key in ratchet message")
             
-            shared_secret = Kyber768.decaps(self._kem_priv, msg.ct)
+            # Decapsulate Kyber ciphertext
+            ss_pq = Kyber768.decaps(self._kem_priv, msg.ct)
             
-            self._apply_ratchet(shared_secret)
+            # X25519 key agreement with responder's ephemeral public key
+            ss_ecdh = x25519_shared_secret(self._ecdh_priv, msg.ecdh_pub)
+            
+            # Derive hybrid shared secret
+            ss_hybrid = derive_hybrid_shared_secret(ss_pq, ss_ecdh)
+            
+            self._apply_ratchet(ss_hybrid, as_initiator=True)
     
     @property
     def epoch(self) -> int:

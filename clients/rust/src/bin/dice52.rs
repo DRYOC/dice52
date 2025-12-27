@@ -1,35 +1,47 @@
-//! Dice52 Demo - Quantum-safe ratchet protocol demonstration
+//! Dice52 Demo - Quantum-safe ratchet protocol demonstration with hybrid KEM
 
 use dice52::{
-    derive_initial_keys, init_chain_keys, initiator_encapsulate, responder_decapsulate, Session,
+    derive_initial_keys, generate_kem_keypair, generate_signing_keypair, generate_x25519_keypair,
+    init_chain_keys, initiator_hybrid_encapsulate, responder_hybrid_decapsulate, Session,
 };
-use pqcrypto_dilithium::dilithium3;
-use pqcrypto_kyber::kyber768;
 
 fn main() {
     println!("=== Dice52 PQ Ratchet Demo ===\n");
 
-    // Generate KEM key pairs for Alice and Bob
+    // Generate Kyber KEM key pairs for Alice and Bob
     println!("Generating Kyber768 key pairs...");
-    let (kem_pub_a, kem_priv_a) = kyber768::keypair();
-    let (kem_pub_b, kem_priv_b) = kyber768::keypair();
+    let (kem_pub_a, kem_priv_a) = generate_kem_keypair();
+    let (kem_pub_b, kem_priv_b) = generate_kem_keypair();
+
+    // Generate X25519 key pairs for hybrid KEM
+    println!("Generating X25519 key pairs...");
+    let (ecdh_pub_a, ecdh_priv_a) = generate_x25519_keypair();
+    let (ecdh_pub_b, ecdh_priv_b) = generate_x25519_keypair();
 
     // Generate Dilithium identity key pairs
     println!("Generating Dilithium3 identity keys...");
-    let (id_pub_a, id_priv_a) = dilithium3::keypair();
-    let (id_pub_b, id_priv_b) = dilithium3::keypair();
+    let (id_pub_a, id_priv_a) = generate_signing_keypair();
+    let (id_pub_b, id_priv_b) = generate_signing_keypair();
 
-    // Alice encapsulates to Bob's public key
-    println!("\nAlice encapsulating to Bob's public key...");
-    let (ss_alice, ct) = initiator_encapsulate(&kem_pub_b);
+    // Alice performs hybrid encapsulation to Bob's public keys (Kyber + X25519)
+    println!("\nAlice performing hybrid encapsulation to Bob's public keys...");
+    let result =
+        initiator_hybrid_encapsulate(&kem_pub_b, &ecdh_pub_b).expect("Hybrid encapsulation failed");
 
-    // Bob decapsulates
-    println!("Bob decapsulating...");
-    let ss_bob = responder_decapsulate(&kem_priv_b, &ct).expect("Decapsulation failed");
+    // Bob performs hybrid decapsulation
+    println!("Bob performing hybrid decapsulation...");
+    let ss_bob = responder_hybrid_decapsulate(
+        &kem_priv_b,
+        &ecdh_priv_b,
+        &result.kyber_ct,
+        &result.ecdh_pub,
+    )
+    .expect("Hybrid decapsulation failed");
 
     // Verify shared secrets match
-    assert_eq!(ss_alice, ss_bob, "Shared secrets should match!");
-    println!("✓ Shared secrets match!");
+    let ss_alice = result.ss_hybrid.clone();
+    assert_eq!(ss_alice, ss_bob, "Hybrid shared secrets should match!");
+    println!("✓ Hybrid shared secrets match!");
 
     // Derive initial keys
     println!("\nDeriving initial keys...");
@@ -40,8 +52,8 @@ fn main() {
     let (cks_alice, ckr_alice) = init_chain_keys(&rk_alice, &ko_alice);
     let (cks_bob, ckr_bob) = init_chain_keys(&rk_bob, &ko_bob);
 
-    // Create sessions
-    let alice = Session::new(
+    // Create sessions with X25519 keys for future hybrid ratchets
+    let alice = Session::new_with_ecdh(
         1,
         rk_alice,
         ko_alice,
@@ -49,16 +61,31 @@ fn main() {
         ckr_alice,
         kem_pub_a,
         kem_priv_a,
+        ecdh_pub_a.clone(),
+        ecdh_priv_a,
+        ecdh_pub_b.clone(),
         id_pub_a.clone(),
         id_priv_a,
         id_pub_b.clone(),
+        true, // Alice is initiator
     );
 
     // Bob's send = Alice's receive, Bob's receive = Alice's send
-    let bob = Session::new(
-        1, rk_bob, ko_bob, ckr_bob, // Bob's send = Alice's receive
+    let bob = Session::new_with_ecdh(
+        1,
+        rk_bob,
+        ko_bob,
+        ckr_bob, // Bob's send = Alice's receive
         cks_bob, // Bob's receive = Alice's send
-        kem_pub_b, kem_priv_b, id_pub_b, id_priv_b, id_pub_a,
+        kem_pub_b,
+        kem_priv_b,
+        ecdh_pub_b.clone(),
+        ecdh_priv_b,
+        ecdh_pub_a,
+        id_pub_b,
+        id_priv_b,
+        id_pub_a,
+        false, // Bob is responder
     );
 
     // Exchange messages
@@ -96,38 +123,41 @@ fn main() {
 
     println!("\n✓ All messages exchanged successfully!");
 
-    // Demonstrate ratcheting
-    println!("\n--- PQ Ratchet ---");
-    println!("Alice initiating ratchet...");
+    // Demonstrate hybrid ratcheting
+    println!("\n--- Hybrid PQ Ratchet ---");
+    println!("Alice initiating hybrid ratchet...");
     let ratchet_msg = alice.initiate_ratchet().expect("Ratchet initiation failed");
     println!(
-        "  Public key size: {} bytes",
+        "  Kyber public key size: {} bytes",
         ratchet_msg.pub_key.as_ref().unwrap().len()
     );
+    if let Some(ecdh_pub) = &ratchet_msg.ecdh_pub {
+        println!("  X25519 public key size: {} bytes", ecdh_pub.len());
+    }
     println!(
         "  Signature size: {} bytes",
         ratchet_msg.sig.as_ref().unwrap().len()
     );
 
-    println!("Bob responding to ratchet...");
+    println!("Bob responding to hybrid ratchet...");
     let response = bob
         .respond_ratchet(&ratchet_msg)
         .expect("Ratchet response failed");
     println!(
-        "  Ciphertext size: {} bytes",
+        "  Kyber ciphertext size: {} bytes",
         response.ct.as_ref().unwrap().len()
     );
 
-    println!("Alice finalizing ratchet...");
+    println!("Alice finalizing hybrid ratchet...");
     alice
         .finalize_ratchet(&response)
         .expect("Ratchet finalization failed");
 
-    println!("✓ Ratchet complete! New epoch: {}", alice.epoch());
+    println!("✓ Hybrid ratchet complete! New epoch: {}", alice.epoch());
 
     // Send message after ratchet
     println!("\n--- Post-Ratchet Message ---");
-    let post_ratchet_msg = "This message uses new keys!";
+    let post_ratchet_msg = "This message uses new hybrid keys!";
     println!("Alice sends: \"{}\"", post_ratchet_msg);
     let msg = alice
         .send(post_ratchet_msg.as_bytes())

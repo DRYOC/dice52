@@ -4,9 +4,11 @@
 
 > ⚠️ **EXPERIMENTAL PROTOCOL** — Dice52-PQ is an experimental research protocol. It has not been audited, formally verified, or standardized. Do not use in production systems without independent security review.
 
-Dice52 explores **entropy-robust post-quantum ratcheting** for secure channels. It is a key agreement protocol that uses ML-DSA (Dilithium) signatures and ML-KEM (Kyber) key encapsulation to achieve quantum-resistant authenticated key exchange.
+Dice52 explores **entropy-robust post-quantum ratcheting** for secure channels. It is a key agreement protocol that uses **hybrid KEM** (ML-KEM/Kyber + X25519), ML-DSA (Dilithium) signatures to achieve quantum-resistant authenticated key exchange with classical security as a defense-in-depth.
 
 **Goal:** A post-quantum, authenticated, forward-secret, per-message-key encryption protocol that preserves Dice52's Ko ordering concept.
+
+**Hybrid KEM:** The shared secret remains secure provided at least one of the component KEMs (Kyber or X25519) remains secure. This follows the industry-standard approach used in TLS 1.3 hybrids, Signal PQ experiments, and OpenSSH PQ mode.
 
 --------------------------------
 
@@ -67,9 +69,11 @@ Dice52 is explicitly **NOT**:
 ### Foundation:
 Replace | With
 ---------|---------
-X25519 | ML-KEM (Kyber)
+X25519 only | **Hybrid KEM** (ML-KEM/Kyber + X25519)
 Ed25519 | ML-DSA (Dilithium)
-DH ratchet | KEM ratchet
+DH ratchet | Hybrid KEM ratchet
+
+The hybrid KEM ensures security even if either Kyber or X25519 is broken individually.
 
 ### Dice52-PQ Ratchet RFC Specification:
 
@@ -205,7 +209,7 @@ Import the package in your Go code:
 import "github.com/dryoc/dice52/clients/golang/pkg/dice52"
 ```
 
-#### Example: Establishing a Session
+#### Example: Establishing a Session with Hybrid KEM
 
 ```go
 package main
@@ -221,7 +225,7 @@ import (
 )
 
 func main() {
-	// Generate KEM key pairs for Alice and Bob
+	// Generate Kyber KEM key pairs for Alice and Bob
 	pubA, privA, _ := kyber768.Scheme().GenerateKeyPair()
 	pubB, privB, _ := kyber768.Scheme().GenerateKeyPair()
 
@@ -230,25 +234,30 @@ func main() {
 	kemPubB := pubB.(*kyber768.PublicKey)
 	kemPrivB := privB.(*kyber768.PrivateKey)
 
+	// Generate X25519 key pairs for Alice and Bob (hybrid KEM)
+	ecdhPubA, ecdhPrivA, _ := dice52.GenerateX25519Keypair()
+	ecdhPubB, ecdhPrivB, _ := dice52.GenerateX25519Keypair()
+
 	// Generate Dilithium identity key pairs
 	idPubA, idPrivA, _ := mode3.GenerateKey(rand.Reader)
 	idPubB, idPrivB, _ := mode3.GenerateKey(rand.Reader)
 
-	// Alice encapsulates to Bob's public key
-	ss, ct, _ := dice52.InitiatorEncapsulate(kemPubB)
+	// Alice performs hybrid encapsulation to Bob's public keys (Kyber + X25519)
+	result, _ := dice52.InitiatorHybridEncapsulate(kemPubB, ecdhPubB)
+	ssAlice := result.SSHybrid
 
-	// Bob decapsulates
-	ssBob, _ := dice52.ResponderDecapsulate(kemPrivB, ct)
+	// Bob performs hybrid decapsulation using his private keys
+	ssBob, _ := dice52.ResponderHybridDecapsulate(kemPrivB, ecdhPrivB, result.KyberCT, result.ECDHPub)
 
-	// Derive initial keys
-	rkAlice, koAlice := dice52.DeriveInitialKeys(ss)
+	// Derive initial keys (uses hybrid shared secret internally)
+	rkAlice, koAlice := dice52.DeriveInitialKeys(ssAlice)
 	rkBob, koBob := dice52.DeriveInitialKeys(ssBob)
 
 	// Initialize chain keys
 	cksAlice, ckrAlice := dice52.InitChainKeys(rkAlice, koAlice)
 	cksBob, ckrBob := dice52.InitChainKeys(rkBob, koBob)
 
-	// Create sessions
+	// Create sessions with X25519 keys for future ratchets
 	alice := &dice52.Session{
 		SessionID: 1,
 		RK:        rkAlice,
@@ -257,6 +266,9 @@ func main() {
 		CKr:       ckrAlice,
 		KEMPub:    kemPubA,
 		KEMPriv:   kemPrivA,
+		ECDHPub:   ecdhPubA,
+		ECDHPriv:  ecdhPrivA,
+		PeerECDHPub: ecdhPubB,
 		IDPriv:    idPrivA,
 		IDPub:     idPubA,
 		PeerID:    idPubB,
@@ -270,6 +282,9 @@ func main() {
 		CKr:       cksBob, // Bob's receive = Alice's send
 		KEMPub:    kemPubB,
 		KEMPriv:   kemPrivB,
+		ECDHPub:   ecdhPubB,
+		ECDHPriv:  ecdhPrivB,
+		PeerECDHPub: ecdhPubA,
 		IDPriv:    idPrivB,
 		IDPub:     idPubB,
 		PeerID:    idPubA,
@@ -281,7 +296,7 @@ func main() {
 	bob.SetInitiator(false)
 	
 	// Phase 1: Exchange commitments
-	aliceCommit, _ := alice.KoStartEnhancement(ss)
+	aliceCommit, _ := alice.KoStartEnhancement(ssAlice)
 	bobCommit, _ := bob.KoStartEnhancement(ssBob)
 	
 	// Phase 2: Exchange reveals
@@ -335,29 +350,41 @@ Or if published to crates.io:
 dice52 = "0.1"
 ```
 
-### Usage
+### Usage with Hybrid KEM
 
 ```rust
-use dice52::{Session, derive_initial_keys, init_chain_keys, initiator_encapsulate, responder_decapsulate};
-use pqcrypto_kyber::kyber768;
-use pqcrypto_dilithium::dilithium3;
+use dice52::{
+    Session, derive_initial_keys, init_chain_keys,
+    generate_kem_keypair, generate_signing_keypair, generate_x25519_keypair,
+    initiator_hybrid_encapsulate, responder_hybrid_decapsulate,
+};
 
 fn main() {
-    // Generate KEM key pairs for Alice and Bob
-    let (kem_pub_a, kem_priv_a) = kyber768::keypair();
-    let (kem_pub_b, kem_priv_b) = kyber768::keypair();
+    // Generate Kyber KEM key pairs for Alice and Bob
+    let (kem_pub_a, kem_priv_a) = generate_kem_keypair();
+    let (kem_pub_b, kem_priv_b) = generate_kem_keypair();
+
+    // Generate X25519 key pairs for Alice and Bob (hybrid KEM)
+    let (ecdh_pub_a, ecdh_priv_a) = generate_x25519_keypair();
+    let (ecdh_pub_b, ecdh_priv_b) = generate_x25519_keypair();
 
     // Generate Dilithium identity key pairs
-    let (id_pub_a, id_priv_a) = dilithium3::keypair();
-    let (id_pub_b, id_priv_b) = dilithium3::keypair();
+    let (id_pub_a, id_priv_a) = generate_signing_keypair();
+    let (id_pub_b, id_priv_b) = generate_signing_keypair();
 
-    // Alice encapsulates to Bob's public key
-    let (ss_alice, ct) = initiator_encapsulate(&kem_pub_b);
+    // Alice performs hybrid encapsulation to Bob's public keys (Kyber + X25519)
+    let result = initiator_hybrid_encapsulate(&kem_pub_b, &ecdh_pub_b).unwrap();
+    let ss_alice = result.ss_hybrid.clone();
 
-    // Bob decapsulates
-    let ss_bob = responder_decapsulate(&kem_priv_b, &ct).unwrap();
+    // Bob performs hybrid decapsulation using his private keys
+    let ss_bob = responder_hybrid_decapsulate(
+        &kem_priv_b,
+        &ecdh_priv_b,
+        &result.kyber_ct,
+        &result.ecdh_pub
+    ).unwrap();
 
-    // Derive initial keys
+    // Derive initial keys (uses hybrid shared secret internally)
     let (rk_alice, ko_alice) = derive_initial_keys(&ss_alice);
     let (rk_bob, ko_bob) = derive_initial_keys(&ss_bob);
 
@@ -365,8 +392,8 @@ fn main() {
     let (cks_alice, ckr_alice) = init_chain_keys(&rk_alice, &ko_alice);
     let (cks_bob, ckr_bob) = init_chain_keys(&rk_bob, &ko_bob);
 
-    // Create sessions (with initiator/responder roles for Ko enhancement)
-    let alice = Session::new_with_role(
+    // Create sessions with X25519 keys for future hybrid ratchets
+    let alice = Session::new_with_ecdh(
         1,
         rk_alice,
         ko_alice,
@@ -374,6 +401,9 @@ fn main() {
         ckr_alice,
         kem_pub_a,
         kem_priv_a,
+        ecdh_pub_a,
+        ecdh_priv_a,
+        ecdh_pub_b.clone(), // Peer's X25519 public key
         id_pub_a.clone(),
         id_priv_a,
         id_pub_b.clone(),
@@ -381,7 +411,7 @@ fn main() {
     );
 
     // Bob's send = Alice's receive
-    let bob = Session::new_with_role(
+    let bob = Session::new_with_ecdh(
         1,
         rk_bob,
         ko_bob,
@@ -389,6 +419,9 @@ fn main() {
         cks_bob,  // Bob's receive = Alice's send
         kem_pub_b,
         kem_priv_b,
+        ecdh_pub_b,
+        ecdh_priv_b,
+        ecdh_pub_a, // Peer's X25519 public key
         id_pub_b,
         id_priv_b,
         id_pub_a,

@@ -1,40 +1,46 @@
-"""Dice52 Demo - Quantum-safe ratchet protocol demonstration."""
+"""Dice52 Demo - Quantum-safe ratchet protocol demonstration with hybrid KEM."""
 
 from .handshake import (
     generate_kem_keypair,
     generate_signing_keypair,
-    initiator_encapsulate,
-    responder_decapsulate,
+    generate_x25519_keypair,
+    initiator_hybrid_encapsulate,
+    responder_hybrid_decapsulate,
 )
 from .kdf import derive_initial_keys, init_chain_keys
 from .session import Session
 
 
 def main():
-    """Run the Dice52 demo."""
+    """Run the Dice52 demo with hybrid KEM."""
     print("=== Dice52 PQ Ratchet Demo (Python) ===\n")
     
-    # Generate KEM key pairs for Alice and Bob
+    # Generate Kyber KEM key pairs for Alice and Bob
     print("Generating Kyber768 key pairs...")
     kem_pub_a, kem_priv_a = generate_kem_keypair()
     kem_pub_b, kem_priv_b = generate_kem_keypair()
+    
+    # Generate X25519 key pairs for hybrid KEM
+    print("Generating X25519 key pairs...")
+    ecdh_pub_a, ecdh_priv_a = generate_x25519_keypair()
+    ecdh_pub_b, ecdh_priv_b = generate_x25519_keypair()
     
     # Generate Dilithium identity key pairs
     print("Generating Dilithium3 identity keys...")
     id_pub_a, id_priv_a = generate_signing_keypair()
     id_pub_b, id_priv_b = generate_signing_keypair()
     
-    # Alice encapsulates to Bob's public key
-    print("\nAlice encapsulating to Bob's public key...")
-    ss_alice, ct = initiator_encapsulate(kem_pub_b)
+    # Alice performs hybrid encapsulation to Bob's public keys (Kyber + X25519)
+    print("\nAlice performing hybrid encapsulation to Bob's public keys...")
+    ss_alice, kyber_ct, alice_ecdh_pub, alice_ecdh_priv = initiator_hybrid_encapsulate(kem_pub_b, ecdh_pub_b)
     
-    # Bob decapsulates
-    print("Bob decapsulating...")
-    ss_bob = responder_decapsulate(kem_priv_b, ct)
+    # Bob performs hybrid decapsulation
+    print("Bob performing hybrid decapsulation...")
+    ss_bob = responder_hybrid_decapsulate(kem_priv_b, ecdh_priv_b, kyber_ct, alice_ecdh_pub)
     
     # Verify shared secrets match
-    assert ss_alice == ss_bob, "Shared secrets should match!"
-    print("✓ Shared secrets match!")
+    assert ss_alice == ss_bob, "Hybrid shared secrets should match!"
+    print("✓ Hybrid shared secrets match!")
     
     # Derive initial keys
     print("\nDeriving initial keys...")
@@ -45,7 +51,7 @@ def main():
     cks_alice, ckr_alice = init_chain_keys(rk_alice, ko_alice)
     cks_bob, ckr_bob = init_chain_keys(rk_bob, ko_bob)
     
-    # Create sessions
+    # Create sessions with X25519 keys for future hybrid ratchets
     alice = Session(
         session_id=1,
         rk=rk_alice,
@@ -58,6 +64,9 @@ def main():
         id_priv=id_priv_a,
         peer_id=id_pub_b,
         is_initiator=True,
+        ecdh_pub=ecdh_pub_a,
+        ecdh_priv=ecdh_priv_a,
+        peer_ecdh_pub=ecdh_pub_b,
     )
     
     # Bob's send = Alice's receive, Bob's receive = Alice's send
@@ -73,6 +82,9 @@ def main():
         id_priv=id_priv_b,
         peer_id=id_pub_a,
         is_initiator=False,
+        ecdh_pub=ecdh_pub_b,
+        ecdh_priv=ecdh_priv_b,
+        peer_ecdh_pub=ecdh_pub_a,
     )
     
     # Exchange messages
@@ -98,25 +110,27 @@ def main():
     
     print("\n✓ All messages exchanged successfully!")
     
-    # Demonstrate ratcheting
-    print("\n--- PQ Ratchet ---")
-    print("Alice initiating ratchet...")
+    # Demonstrate hybrid ratcheting
+    print("\n--- Hybrid PQ Ratchet ---")
+    print("Alice initiating hybrid ratchet...")
     ratchet_msg = alice.initiate_ratchet()
-    print(f"  Public key size: {len(ratchet_msg.pub_key)} bytes")
+    print(f"  Kyber public key size: {len(ratchet_msg.pub_key)} bytes")
+    if ratchet_msg.ecdh_pub:
+        print(f"  X25519 public key size: {len(ratchet_msg.ecdh_pub)} bytes")
     print(f"  Signature size: {len(ratchet_msg.sig)} bytes")
     
-    print("Bob responding to ratchet...")
+    print("Bob responding to hybrid ratchet...")
     response = bob.respond_ratchet(ratchet_msg)
-    print(f"  Ciphertext size: {len(response.ct)} bytes")
+    print(f"  Kyber ciphertext size: {len(response.ct)} bytes")
     
-    print("Alice finalizing ratchet...")
+    print("Alice finalizing hybrid ratchet...")
     alice.finalize_ratchet(response)
     
-    print(f"✓ Ratchet complete! New epoch: {alice.epoch}")
+    print(f"✓ Hybrid ratchet complete! New epoch: {alice.epoch}")
     
     # Send message after ratchet
     print("\n--- Post-Ratchet Message ---")
-    post_ratchet_msg = "This message uses new keys!"
+    post_ratchet_msg = "This message uses new hybrid keys!"
     print(f"Alice sends: \"{post_ratchet_msg}\"")
     msg = alice.send(post_ratchet_msg.encode())
     decrypted = bob.receive(msg)
@@ -127,4 +141,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

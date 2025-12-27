@@ -1,7 +1,7 @@
 [package]
 name = "dice52"
-version = "0.1.5"
-edition = "2021"
+version = "0.1.9"
+edition = "2025"
 description = "Quantum-safe ratchet protocol using ML-KEM (Kyber) and ML-DSA (Dilithium)"
 license = "MIT"
 repository = "https://github.com/dryoc/dice52"
@@ -20,6 +20,9 @@ path = "src/bin/dice52.rs"
 pqcrypto-kyber = "0.8"
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
+
+# Classical cryptography (X25519 for hybrid KEM)
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 
 # Symmetric cryptography
 chacha20poly1305 = "0.10"

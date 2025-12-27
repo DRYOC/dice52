@@ -16,6 +16,13 @@ func hkdfExpand(secret, info []byte) []byte {
 	return out
 }
 
+// DeriveHybridSharedSecret combines Kyber and X25519 shared secrets (Section 3.1)
+// SS_hybrid = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")
+func DeriveHybridSharedSecret(ssPQ, ssECDH []byte) []byte {
+	combined := append(ssPQ, ssECDH...)
+	return hkdfExpand(combined, []byte(HybridSSInfo))
+}
+
 // DeriveInitialKeys derives RK and Ko from shared secret (Section 8)
 func DeriveInitialKeys(ss []byte) (rk, ko []byte) {
 	rk = hkdfExpand(ss, []byte(RKInfo))

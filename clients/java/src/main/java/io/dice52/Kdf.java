@@ -45,6 +45,17 @@ public class Kdf {
     }
 
     /**
+     * Derive hybrid shared secret from Kyber and X25519 shared secrets (Section
+     * 3.1).
+     * 
+     * SS_hybrid = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")
+     */
+    public static byte[] deriveHybridSharedSecret(byte[] ssPq, byte[] ssEcdh) {
+        byte[] combined = concat(ssPq, ssEcdh);
+        return hkdfExpand(combined, Constants.HYBRID_SS_INFO);
+    }
+
+    /**
      * Derive RK and Ko from shared secret (Section 8).
      * 
      * @return array of [root_key, ko]

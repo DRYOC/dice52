@@ -24,6 +24,13 @@ MK_INFO: bytes = b"Dice52-MK"
 # Ratchet info (Section 13)
 RK_RATCHET_INFO: bytes = b"Dice52-RK-Ratchet"
 
+# Hybrid KEM info string (Section 3.4)
+HYBRID_SS_INFO: bytes = b"Dice52-Hybrid-SS"
+
+# X25519 key sizes
+X25519_PUBLIC_KEY_SIZE: int = 32
+X25519_PRIVATE_KEY_SIZE: int = 32
+
 # Ko enhancement info strings (Section 7.1)
 KO_COMMIT_PREFIX: bytes = b"Dice52-Ko-Commit"
 KO_COMMIT_KEY_INFO: bytes = b"Dice52-Ko-CommitKey"
@@ -60,10 +67,13 @@ class ParanoidConfig:
 
 @dataclass
 class HandshakeMessage:
-    """Handshake message for initial key exchange."""
+    """Handshake message for initial key exchange (Section 6.2).
+    Now includes X25519 public key for hybrid KEM.
+    """
     
     kyber_ct: bytes  # Kyber ciphertext
-    sig: bytes  # Dilithium signature
+    ecdh_pub: bytes  # X25519 ephemeral public key (32 bytes)
+    sig: bytes  # Dilithium signature over kyber_ct || ecdh_pub
 
 
 @dataclass
@@ -76,10 +86,11 @@ class Message:
 
 @dataclass
 class RatchetMessage:
-    """Ratchet message for PQ ratchet key exchange."""
+    """Ratchet message for hybrid PQ ratchet key exchange (Section 12)."""
     
     pub_key: Optional[bytes] = None  # New KEM public key (for initiator)
-    sig: Optional[bytes] = None  # Dilithium signature (for initiator)
+    ecdh_pub: Optional[bytes] = None  # X25519 public key (32 bytes)
+    sig: Optional[bytes] = None  # Dilithium signature over pub_key || ecdh_pub
     ct: Optional[bytes] = None  # KEM ciphertext (for responder)
 
 

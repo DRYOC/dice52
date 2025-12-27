@@ -15,6 +15,7 @@ from .types import (
     CKR_INFO,
     MK_INFO,
     RK_RATCHET_INFO,
+    HYBRID_SS_INFO,
     KO_COMMIT_PREFIX,
     KO_COMMIT_KEY_INFO,
     KO_ENHANCED_INFO,
@@ -29,6 +30,23 @@ def hkdf_expand(secret: bytes, info: bytes, length: int = KEY_LEN) -> bytes:
 def hkdf_expand_with_salt(secret: bytes, salt: bytes, info: bytes, length: int) -> bytes:
     """HKDF expand with salt."""
     return HKDF(secret, length, salt=salt, num_keys=1, hashmod=SHA256, context=info)
+
+
+def derive_hybrid_shared_secret(ss_pq: bytes, ss_ecdh: bytes) -> bytes:
+    """
+    Derive hybrid shared secret from Kyber and X25519 shared secrets (Section 3.1).
+    
+    SS_hybrid = HKDF(SS_pq || SS_ecdh, "Dice52-Hybrid-SS")
+    
+    Args:
+        ss_pq: Post-quantum (Kyber) shared secret
+        ss_ecdh: Classical (X25519) shared secret
+        
+    Returns:
+        Combined hybrid shared secret
+    """
+    combined = ss_pq + ss_ecdh
+    return hkdf_expand(combined, HYBRID_SS_INFO)
 
 
 def derive_initial_keys(ss: bytes) -> Tuple[bytes, bytes]:

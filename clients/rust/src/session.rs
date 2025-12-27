@@ -9,10 +9,10 @@ use pqcrypto_traits::sign::DetachedSignature;
 
 use crate::crypto::{decrypt, encrypt, rand_bytes, zero_bytes};
 use crate::error::{Dice52Error, Result};
-use crate::handshake::generate_kem_keypair;
+use crate::handshake::{generate_kem_keypair, generate_x25519_keypair, x25519_shared_secret};
 use crate::kdf::{
-    ck_to_mk, commit_entropy, derive_enhanced_ko, derive_ko_commit_key, init_chain_keys,
-    verify_commit,
+    ck_to_mk, commit_entropy, derive_enhanced_ko, derive_hybrid_shared_secret,
+    derive_ko_commit_key, init_chain_keys, verify_commit,
 };
 use crate::types::{
     Header, KoCommitMessage, KoEnhancementState, KoRevealMessage, Message, ParanoidConfig,
@@ -41,10 +41,15 @@ struct SessionInner {
     /// Epoch counter
     epoch: u64,
 
-    /// Our KEM private key
+    /// Our KEM private key (Kyber)
     kem_priv: kyber768::SecretKey,
-    /// Our KEM public key
+    /// Our KEM public key (Kyber)
     kem_pub: kyber768::PublicKey,
+
+    /// Our X25519 private key for hybrid KEM
+    ecdh_priv: Vec<u8>,
+    /// Our X25519 public key for hybrid KEM
+    ecdh_pub: Vec<u8>,
 
     /// Our identity private key (Dilithium)
     id_priv: dilithium3::SecretKey,
@@ -114,6 +119,9 @@ impl Session {
         peer_id: dilithium3::PublicKey,
         is_initiator: bool,
     ) -> Self {
+        // Generate initial X25519 keypair
+        let (ecdh_pub, ecdh_priv) = generate_x25519_keypair();
+
         Self {
             inner: Mutex::new(SessionInner {
                 rk,
@@ -125,6 +133,54 @@ impl Session {
                 epoch: 0,
                 kem_priv,
                 kem_pub,
+                ecdh_priv,
+                ecdh_pub,
+                id_priv,
+                id_pub,
+                peer_id,
+                session_id,
+                ko_enhancement: None,
+                ko_enhanced: false,
+                is_initiator,
+                paranoid_config: ParanoidConfig::default(),
+                last_ko_enhanced_epoch: 0,
+                pending_ko_reenhance: false,
+                last_shared_secret: None,
+            }),
+        }
+    }
+
+    /// Create a new session with explicit X25519 keys for hybrid KEM
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_ecdh(
+        session_id: u32,
+        rk: [u8; 32],
+        ko: [u8; 32],
+        cks: [u8; 32],
+        ckr: [u8; 32],
+        kem_pub: kyber768::PublicKey,
+        kem_priv: kyber768::SecretKey,
+        ecdh_pub: Vec<u8>,
+        ecdh_priv: Vec<u8>,
+        _peer_ecdh_pub: Vec<u8>, // Stored for future ratchets
+        id_pub: dilithium3::PublicKey,
+        id_priv: dilithium3::SecretKey,
+        peer_id: dilithium3::PublicKey,
+        is_initiator: bool,
+    ) -> Self {
+        Self {
+            inner: Mutex::new(SessionInner {
+                rk,
+                cks,
+                ckr,
+                ko,
+                ns: 0,
+                nr: 0,
+                epoch: 0,
+                kem_priv,
+                kem_pub,
+                ecdh_priv,
+                ecdh_pub,
                 id_priv,
                 id_pub,
                 peer_id,
@@ -258,42 +314,55 @@ impl Session {
         pt
     }
 
-    /// Initiate a PQ ratchet with Dilithium signature
+    /// Initiate a hybrid PQ ratchet with Dilithium signature (Section 12.2)
     pub fn initiate_ratchet(&self) -> Result<RatchetMessage> {
         let mut inner = self.inner.lock();
 
+        // Generate new Kyber key pair
         let (pub_key, priv_key) = generate_kem_keypair();
         inner.kem_priv = priv_key;
         inner.kem_pub = pub_key;
 
+        // Generate new X25519 key pair
+        let (ecdh_pub, ecdh_priv) = generate_x25519_keypair();
+        inner.ecdh_priv = ecdh_priv;
+        inner.ecdh_pub = ecdh_pub.clone();
+
+        // Sign both public keys: SigContext || KEMPub || ECDHPub
         let pub_bytes = inner.kem_pub.as_bytes();
         let mut to_sign = SIG_CONTEXT.to_vec();
         to_sign.extend_from_slice(pub_bytes);
+        to_sign.extend_from_slice(&ecdh_pub);
 
         let sig = dilithium3::detached_sign(&to_sign, &inner.id_priv);
 
         Ok(RatchetMessage {
             pub_key: Some(pub_bytes.to_vec()),
+            ecdh_pub: Some(ecdh_pub),
             sig: Some(sig.as_bytes().to_vec()),
             ct: None,
         })
     }
 
-    /// Respond to initiator's ratchet message (verify and encapsulate)
+    /// Respond to initiator's hybrid ratchet message (Section 12.3)
     pub fn respond_ratchet(&self, msg: &RatchetMessage) -> Result<RatchetMessage> {
         let mut inner = self.inner.lock();
 
         let pub_key_bytes = msg.pub_key.as_ref().ok_or(Dice52Error::KemError(
             "missing public key in ratchet message".into(),
         ))?;
+        let peer_ecdh_pub = msg.ecdh_pub.as_ref().ok_or(Dice52Error::KemError(
+            "missing ECDH public key in ratchet message".into(),
+        ))?;
         let sig_bytes = msg
             .sig
             .as_ref()
             .ok_or(Dice52Error::InvalidRatchetSignature)?;
 
-        // Verify signature
+        // Verify signature over SigContext || KEMPub || ECDHPub
         let mut to_verify = SIG_CONTEXT.to_vec();
         to_verify.extend_from_slice(pub_key_bytes);
+        to_verify.extend_from_slice(peer_ecdh_pub);
 
         let sig = dilithium3::DetachedSignature::from_bytes(sig_bytes)
             .map_err(|_| Dice52Error::InvalidRatchetSignature)?;
@@ -301,47 +370,62 @@ impl Session {
         dilithium3::verify_detached_signature(&sig, &to_verify, &inner.peer_id)
             .map_err(|_| Dice52Error::InvalidRatchetSignature)?;
 
-        // Parse peer's new public key
+        // Parse peer's new Kyber public key
         let peer_pub = kyber768::PublicKey::from_bytes(pub_key_bytes)
             .map_err(|_| Dice52Error::KeyParseError("invalid KEM public key".into()))?;
 
-        // Encapsulate to peer's new public key
-        let (ss, ct) = kyber768::encapsulate(&peer_pub);
+        // Generate ephemeral X25519 key pair for response
+        let (ecdh_pub, ecdh_priv) = generate_x25519_keypair();
 
-        // Apply ratchet
-        Self::apply_ratchet_inner(&mut inner, ss.as_bytes());
+        // Kyber encapsulation
+        let (ss_pq, ct) = kyber768::encapsulate(&peer_pub);
 
-        // Responder needs chain keys swapped relative to initiator
-        let tmp = inner.cks;
-        inner.cks = inner.ckr;
-        inner.ckr = tmp;
+        // X25519 key agreement
+        let ss_ecdh = x25519_shared_secret(&ecdh_priv, peer_ecdh_pub)?;
+
+        // Derive hybrid shared secret
+        let ss_hybrid = derive_hybrid_shared_secret(ss_pq.as_bytes(), &ss_ecdh);
+
+        // Apply ratchet with hybrid shared secret (responder)
+        Self::apply_ratchet_inner(&mut inner, &ss_hybrid, false);
 
         Ok(RatchetMessage {
             pub_key: None,
+            ecdh_pub: Some(ecdh_pub),
             sig: None,
             ct: Some(ct.as_bytes().to_vec()),
         })
     }
 
-    /// Finalize the ratchet on the initiator side
+    /// Finalize the hybrid ratchet on the initiator side (Section 12.4)
     pub fn finalize_ratchet(&self, msg: &RatchetMessage) -> Result<()> {
         let mut inner = self.inner.lock();
 
         let ct_bytes = msg.ct.as_ref().ok_or(Dice52Error::KemError(
             "missing ciphertext in ratchet message".into(),
         ))?;
+        let peer_ecdh_pub = msg.ecdh_pub.as_ref().ok_or(Dice52Error::KemError(
+            "missing ECDH public key in ratchet response".into(),
+        ))?;
 
+        // Decapsulate Kyber ciphertext
         let ct = kyber768::Ciphertext::from_bytes(ct_bytes)
             .map_err(|_| Dice52Error::KemError("invalid ciphertext".into()))?;
 
-        let ss = kyber768::decapsulate(&ct, &inner.kem_priv);
+        let ss_pq = kyber768::decapsulate(&ct, &inner.kem_priv);
 
-        Self::apply_ratchet_inner(&mut inner, ss.as_bytes());
+        // X25519 key agreement with responder's ephemeral public key
+        let ss_ecdh = x25519_shared_secret(&inner.ecdh_priv, peer_ecdh_pub)?;
+
+        // Derive hybrid shared secret
+        let ss_hybrid = derive_hybrid_shared_secret(ss_pq.as_bytes(), &ss_ecdh);
+
+        Self::apply_ratchet_inner(&mut inner, &ss_hybrid, true); // Initiator
         Ok(())
     }
 
     /// Internal ratchet application
-    fn apply_ratchet_inner(inner: &mut SessionInner, ss: &[u8]) {
+    fn apply_ratchet_inner(inner: &mut SessionInner, ss: &[u8], as_initiator: bool) {
         use hkdf::Hkdf;
         use sha2::Sha256;
 
@@ -361,8 +445,15 @@ impl Session {
 
         // Reinitialize chain keys
         let (cks, ckr) = init_chain_keys(&inner.rk, &inner.ko);
-        inner.cks = cks;
-        inner.ckr = ckr;
+        if as_initiator {
+            // Ratchet initiator: CKs sends, CKr receives
+            inner.cks = cks;
+            inner.ckr = ckr;
+        } else {
+            // Ratchet responder: swap keys (responder's send = initiator's receive)
+            inner.cks = ckr;
+            inner.ckr = cks;
+        }
         inner.ns = 0;
         inner.nr = 0;
         inner.epoch += 1;

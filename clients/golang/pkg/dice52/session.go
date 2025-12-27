@@ -139,12 +139,21 @@ func (s *Session) Receive(m *Message) ([]byte, error) {
 }
 
 // applyRatchet performs a PQ ratchet step (Section 13)
-func (s *Session) applyRatchet(ss []byte) {
+func (s *Session) applyRatchet(ss []byte, asInitiator bool) {
 	combined := append(append(s.RK, ss...), s.Ko...)
 	s.RK = hkdfExpand(combined, []byte(RKRatchetInfo))
 	s.Ko = hkdfExpand(s.RK, []byte(KoInfo))
 
-	s.CKs, s.CKr = InitChainKeys(s.RK, s.Ko)
+	cks, ckr := InitChainKeys(s.RK, s.Ko)
+	if asInitiator {
+		// Ratchet initiator: CKs sends, CKr receives
+		s.CKs = cks
+		s.CKr = ckr
+	} else {
+		// Ratchet responder: swap keys (responder's send = initiator's receive)
+		s.CKs = ckr
+		s.CKr = cks
+	}
 	s.Ns = 0
 	s.Nr = 0
 	s.Epoch++
@@ -161,8 +170,9 @@ func (s *Session) applyRatchet(ss []byte) {
 	}
 }
 
-// InitiateRatchet starts a PQ ratchet with Dilithium signature
+// InitiateRatchet starts a hybrid PQ ratchet with Dilithium signature (Section 12.2)
 func (s *Session) InitiateRatchet() (*RatchetMessage, error) {
+	// Generate new Kyber key pair
 	pub, priv, err := kyber768.Scheme().GenerateKeyPair()
 	if err != nil {
 		return nil, err
@@ -171,46 +181,90 @@ func (s *Session) InitiateRatchet() (*RatchetMessage, error) {
 	s.KEMPriv = priv.(*kyber768.PrivateKey)
 	s.KEMPub = pub.(*kyber768.PublicKey)
 
+	// Generate new X25519 key pair
+	ecdhPub, ecdhPriv, err := GenerateX25519Keypair()
+	if err != nil {
+		return nil, err
+	}
+
+	s.ECDHPriv = ecdhPriv
+	s.ECDHPub = ecdhPub
+
+	// Sign both public keys: SigContext || KEMPub || ECDHPub
 	pubBytes, _ := s.KEMPub.MarshalBinary()
 	toSign := append([]byte(SigContext), pubBytes...)
+	toSign = append(toSign, ecdhPub...)
 	sig := make([]byte, mode3.SignatureSize)
 	mode3.SignTo(s.IDPriv, toSign, sig)
 
 	return &RatchetMessage{
-		PubKey: pubBytes,
-		Sig:    sig,
+		PubKey:  pubBytes,
+		ECDHPub: ecdhPub,
+		Sig:     sig,
 	}, nil
 }
 
-// RespondRatchet is used to respond to initiator's ratchet message (verify and encapsulate)
+// RespondRatchet is used to respond to initiator's hybrid ratchet message (Section 12.3)
 func (s *Session) RespondRatchet(msg *RatchetMessage) (*RatchetMessage, error) {
+	// Verify signature over SigContext || KEMPub || ECDHPub
 	toVerify := append([]byte(SigContext), msg.PubKey...)
+	toVerify = append(toVerify, msg.ECDHPub...)
 	if !mode3.Verify(s.PeerID, toVerify, msg.Sig) {
 		return nil, errors.New("ratchet signature invalid")
 	}
 
+	// Unmarshal peer's Kyber public key
 	peerPub, err := kyber768.Scheme().UnmarshalBinaryPublicKey(msg.PubKey)
 	if err != nil {
 		return nil, err
 	}
 
-	ct, ss, err := kyber768.Scheme().Encapsulate(peerPub)
+	// Store peer's X25519 public key
+	s.PeerECDHPub = msg.ECDHPub
+
+	// Generate ephemeral X25519 key pair for response
+	ecdhPub, ecdhPriv, err := GenerateX25519Keypair()
 	if err != nil {
 		return nil, err
 	}
 
-	s.applyRatchet(ss)
-	return &RatchetMessage{CT: ct}, nil
+	// Kyber encapsulation
+	ct, ssPQ, err := kyber768.Scheme().Encapsulate(peerPub)
+	if err != nil {
+		return nil, err
+	}
+
+	// X25519 key agreement
+	ssECDH, err := X25519SharedSecret(ecdhPriv, msg.ECDHPub)
+	if err != nil {
+		return nil, err
+	}
+
+	// Derive hybrid shared secret
+	ssHybrid := DeriveHybridSharedSecret(ssPQ, ssECDH)
+
+	s.applyRatchet(ssHybrid, false) // Responder
+	return &RatchetMessage{CT: ct, ECDHPub: ecdhPub}, nil
 }
 
-// FinalizeRatchet completes the ratchet on the initiator side
+// FinalizeRatchet completes the hybrid ratchet on the initiator side (Section 12.4)
 func (s *Session) FinalizeRatchet(msg *RatchetMessage) error {
-	ss, err := kyber768.Scheme().Decapsulate(s.KEMPriv, msg.CT)
+	// Decapsulate Kyber ciphertext
+	ssPQ, err := kyber768.Scheme().Decapsulate(s.KEMPriv, msg.CT)
 	if err != nil {
 		return err
 	}
 
-	s.applyRatchet(ss)
+	// X25519 key agreement with responder's ephemeral public key
+	ssECDH, err := X25519SharedSecret(s.ECDHPriv, msg.ECDHPub)
+	if err != nil {
+		return err
+	}
+
+	// Derive hybrid shared secret
+	ssHybrid := DeriveHybridSharedSecret(ssPQ, ssECDH)
+
+	s.applyRatchet(ssHybrid, true) // Initiator
 	return nil
 }
 
