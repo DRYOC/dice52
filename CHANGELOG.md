@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-04-18
+
+### Changed
+
+#### Dependency Upgrades (All Client Implementations)
+- Upgraded Go, Rust, Python 3, and Java client dependencies to their latest compatible versions
+- All four test suites continue to pass after the upgrade (Go, Rust 16/16, Java 4/4, Python 3 4/4)
+
+#### Rust Manifest Correction
+- Fixed invalid `edition = "2025"` in `clients/rust/Cargo.toml` (not a released Rust edition) to `edition = "2024"`; Cargo rejected the previous manifest outright
+- Refreshed `Cargo.lock` to the latest semver-compatible patch versions for all crates
+
+### Dependencies
+
+#### Go (`clients/golang/`)
+| Dependency | From | To |
+|------------|------|-----|
+| `go` toolchain | 1.25.5 | 1.25.8 |
+| `github.com/cloudflare/circl` | 1.6.1 | 1.6.3 |
+| `golang.org/x/crypto` | 0.46.0 | 0.50.0 |
+| `golang.org/x/sys` | 0.39.0 | 0.43.0 |
+
+#### Python 3 (`clients/python3/`)
+| Dependency | From | To |
+|------------|------|-----|
+| `kyber-py` | `>=0.2.0` | `>=1.2.0` |
+| `dilithium-py` | `>=0.1.0` | `>=1.4.0` |
+| `cryptography` | `>=41.0.0` | `>=46.0.0` |
+| `pycryptodome` | `>=3.20.0` | `>=3.23.0` |
+| `typing-extensions` | `>=4.0.0` | `>=4.15.0` |
+| `pytest` (dev) | `>=7.0.0` | `>=9.0.0` |
+
+- Added the missing `cryptography` dependency to `pyproject.toml` (previously only declared in `requirements.txt`)
+
+#### Java (`clients/java/`)
+| Dependency | From | To |
+|------------|------|-----|
+| `com.google.code.gson:gson` | 2.10.1 | 2.13.2 |
+| `maven-compiler-plugin` | 3.11.0 | 3.14.0 |
+| `maven-jar-plugin` | 3.3.0 | 3.4.2 |
+| `maven-surefire-plugin` | 3.2.2 | 3.5.2 |
+| `exec-maven-plugin` | 3.1.0 | 3.5.0 |
+| `org.junit.jupiter:junit-jupiter` | 5.10.1 | 6.0.3 |
+| `org.bouncycastle:bcprov-jdk18on` / `bcpkix-jdk18on` | 1.78 | 1.78.1 (pinned) |
+
+### Security
+
+#### Bouncy Castle Pinned to 1.78.1 (Java Client)
+- **Last release containing `org.bouncycastle.pqc.crypto.crystals.kyber`**: BC 1.79+ replaced Crystals-Kyber with ML-KEM (FIPS 203), which is wire-incompatible with the draft Kyber still used by the Go, Rust, and Python client implementations
+- **Upgrade path**: Moving the Java client beyond BC 1.78.x requires a coordinated protocol migration (Kyber → ML-KEM) across all four client implementations; tracked as a future breaking change
+- **Inline rationale**: `pom.xml` carries an explanatory comment next to the `<bouncycastle.version>` property so future maintainers don't re-attempt a silent upgrade
+
+### Miscellaneous
+
+- Added `CLAUDE.md` and `.claude/` to `.gitignore`
+
+---
+
 ## [0.1.9] - 2025-12-27
 
 ### Added
@@ -297,6 +355,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.1.10]: https://github.com/dryoc/dice52/releases/tag/v0.1.10
 [0.1.9]: https://github.com/dryoc/dice52/releases/tag/v0.1.9
 [0.1.8]: https://github.com/dryoc/dice52/releases/tag/v0.1.8
 [0.1.7]: https://github.com/dryoc/dice52/releases/tag/v0.1.7

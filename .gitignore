@@ -23,3 +23,7 @@ clients/python3/build/
 # Java
 clients/java/target/
 *.class
+
+# Claude
+.claude/
+CLAUDE.md
